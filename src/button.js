@@ -23,9 +23,15 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 // A fourth one is about idempotency and belongs to main.js, not here: mount()
 // does not read or write `data-xiw-done`. The caller marks a root, because the
 // marker has to survive a React re-render of that root and only the caller
-// knows when a root is a root. mount() is nonetheless a no-op if its own button
-// is already in the row, so a caller that scans one root twice cannot produce
-// two buttons.
+// knows when a root is a root. mount() still cannot produce two buttons for one
+// row, and it re-applies the row's own class and positioning on every call
+// rather than only on the first, so a re-mount repairs a row whose className X
+// took back.
+//
+// The ownership rule that decides WHICH media counts as this post's is dom.js's
+// and is consumed here as XIW.ownElements, not copied. That is the only thing
+// this file used to duplicate, and it is why button.js is the second consumer
+// named in dom.js's export.
 //
 // Everything below is in an IIFE. These are classic content scripts sharing one
 // globalThis with the other five, and a top-level var or function declaration in
@@ -87,10 +93,19 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   user-select: none;
   white-space: nowrap;
   /* The default state. A fully-opaque control on every multi-photo post in the
-     feed is visual noise on a page the user did not ask us to restyle, and
-     opacity rather than visibility keeps the button focusable while it is
-     invisible -- Tab still reaches it, which is the whole reason this is a real
-     <button>. */
+     feed is visual noise on a page the user did not ask us to restyle.
+
+     opacity, and not visibility: hidden, for two reasons and both are load
+     bearing. A visibility: hidden element is not focusable, so the
+     :focus-within reveal below could never fire -- the keyboard user could not
+     Tab to the control at all, and the reveal would be dead code. And it is not
+     hit-testable, which is the trade the other way: with opacity the button is
+     clickable during the 0.12s the fade takes, and a tap on a touch device --
+     where there is no hover to reveal it first -- lands on a control the user
+     has not seen yet. Hovering the row reveals it before a mouse can get
+     there, so that window is closed for a pointer; a finger is the open case,
+     and it merges the post and shows the button arriving at the same time,
+     which is a Task 8 checklist item rather than a defect to design around. */
   opacity: 0;
   transition: opacity 0.12s;
 }
@@ -101,7 +116,12 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    The button's own hover and focus-within are not only for their own sake: a
    re-render can take the row's className back to X's own and leave this button
    standing, and a control that is then revealed by neither is as invisible as
-   the one this file exists not to create. */
+   the one this file exists not to create.
+
+   pointer-events: none on the busy class is the mouse half of aria-disabled: the
+   control reports itself unavailable and refuses the pointer, while staying in
+   the tab order and keeping the focus it already has. The click listener's own
+   flag is what refuses the keyboard half. */
 .${ROW_CLASS}:hover .${BUTTON_CLASS},
 .${BUTTON_CLASS}:hover,
 .${BUTTON_CLASS}:focus-within,
@@ -109,7 +129,8 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   opacity: 1;
 }
 
-.${BUTTON_CLASS}:disabled {
+.${BUTTON_CLASS}.${BUSY_CLASS} {
+  pointer-events: none;
   cursor: progress;
 }
 
@@ -137,9 +158,12 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    * safe: dom.js refuses anything it cannot query, so this function never reads
    * off an element it has not just been told is a real root.
    *
-   * A no-op when the row already carries this file's button, so calling it twice
-   * for one root produces one button. `data-xiw-done` is the caller's marker and
-   * is neither read nor written here.
+   * The row's own class, positioning, stacking context and the page's one
+   * stylesheet are written on every call, before the check for an existing
+   * button, and the button is only created when there is not one already. So
+   * calling this twice for one root produces one button and still repairs a row
+   * a React re-render has taken our class back from. `data-xiw-done` is the
+   * caller's marker and is neither read nor written here.
    *
    * The IDs collected to decide mergeability are not kept. The click handler
    * collects again, and if that answer is `null` it returns silently: React may
@@ -153,21 +177,28 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // first photo's parentElement. The own-ness is the part that is easy to get
     // wrong: an outer post quoting a two-photo post has four photo containers,
     // and appending to the first one's parent is the difference between a button
-    // that merges this post's images and one that merges the quoted post's.
-    var photos = ownPhotos(root);
+    // that merges this post's images and one that merges the quoted post's. The
+    // rule is dom.js's and it is exported for exactly this second use, so the
+    // two consumers cannot drift.
+    var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
     var first = photos[0];
     if (!first || !first.parentElement) return;
 
     var row = first.parentElement;
-    // Idempotent in its own terms, and cheaper than the alternative: one query
-    // on a row that holds a handful of children, run once per post.
-    if (row.querySelector('.' + BUTTON_CLASS)) return;
-
     var doc = root.ownerDocument;
+
+    // The repairs come before the idempotency guard, and that ordering is the
+    // point of the guard being idempotent at all. A React re-render can put X's
+    // own className back on the row and leave this button standing, and a
+    // re-mount that returned early on finding the button would never restore the
+    // class the row-hover reveal is scoped to -- a control that is on the page
+    // and cannot be seen. Every write here is idempotent, so a caller that
+    // reaches one root twice pays for them twice and gets one button.
     ensureStyles(doc);
     positionRow(row);
     row.classList.add(ROW_CLASS);
     row.setAttribute('data-xiw-row', '');
+    if (row.querySelector('.' + BUTTON_CLASS)) return;
 
     var button = doc.createElement('button');
     button.setAttribute('type', 'button');
@@ -176,8 +207,11 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     button.className = BUTTON_CLASS;
     button.textContent = IDLE_LABEL;
     // Inline, for the reason given above the stylesheet: this is a positioned
-    // control inside a container X also positions, and z-index is the difference
-    // between painting above the post's own media and under it.
+    // control inside a container X also positions, and nothing at author level --
+    // X's rules included -- may outrank an inline declaration. The value only
+    // has to beat what is inside the media row, which positionRow's stacking
+    // context is there to guarantee; see the note on that function for why a
+    // small number is a deliberate choice here and not a risk.
     button.style.position = 'absolute';
     button.style.top = '8px';
     button.style.right = '8px';
@@ -189,27 +223,35 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     var busy = false;
 
     // Busy and idle are one function rather than two so the way back cannot
-    // drift from the way out. The label changes and `aria-busy` is set; the
-    // aria-label does not, because "Merge images into one" stays the name of the
-    // control and aria-busy is what tells a screen reader the state is not idle.
+    // drift from the way out. The label changes and aria-busy and aria-disabled
+    // are set; the aria-label does not, because "Merge images into one" stays
+    // the name of the control and aria-busy is what tells a screen reader the
+    // state is not idle.
+    //
+    // aria-disabled, NOT the disabled attribute. A disabled button cannot hold
+    // focus: setting it here would drop the keyboard user's focus onto <body>
+    // the moment they activate the control, re-enabling it would not give the
+    // focus back, and the overlay would then snapshot <body> as the element to
+    // restore on close. aria-disabled says the same thing to assistive tech
+    // without taking the control out of the tab order or the focus ring, and
+    // pointer-events in the busy class keeps the mouse out. What actually stops
+    // a second attempt is the flag below -- a dispatched click still reaches this
+    // listener, whether the button is disabled or not.
     function setBusy(next) {
       busy = next;
-      button.disabled = next;
       button.textContent = next ? BUSY_LABEL : IDLE_LABEL;
       if (next) {
         button.setAttribute('aria-busy', 'true');
+        button.setAttribute('aria-disabled', 'true');
         button.classList.add(BUSY_CLASS);
       } else {
         button.removeAttribute('aria-busy');
+        button.removeAttribute('aria-disabled');
         button.classList.remove(BUSY_CLASS);
       }
     }
 
     async function merge() {
-      // The guard is load-bearing, not belt-and-braces: `disabled` stops a real
-      // user click, but a dispatched click event still reaches the listener, and
-      // a second composite would be a second canvas of the same multi-megabyte
-      // tiles with nothing to explain either of them.
       if (busy) return;
 
       // Constraint 2. collectPhotoIds is a pure read and costs less than the
@@ -220,6 +262,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       setBusy(true);
       var composite = null;
       var failure = null;
+      // A boolean beside the error rather than a test of the error itself: a
+      // rejection reason is whatever was thrown, and `undefined` is a value
+      // something can reject with.
       var failed = false;
       try {
         composite = await XIW.stitchVertical(ids);
@@ -229,21 +274,18 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
         // the user asked for an image, not for a console entry.
         failed = true;
         failure = err;
+      } finally {
+        setBusy(false);
       }
-
-      // Idle before the overlay opens, never in a `finally` after it. The
-      // overlay captures document.activeElement when it opens and hands focus
-      // back to it on close, and a disabled button cannot hold focus -- so a
-      // `finally` here would leave every keyboard user's focus dropped on body.
-      setBusy(false);
 
       if (failed) {
         // Retry is the same closure, called from the overlay's Retry click
         // handler and from nowhere else, which is what keeps the user gesture
         // attached to the work: the retry re-stitches inside a click the user
-        // just made rather than from a timer.
+        // just made rather than from a timer. start() rather than merge() so
+        // neither call site can leave a rejected promise unhandled.
         XIW.overlay.showError(failure, function retry() {
-          return merge();
+          return start();
         });
         return;
       }
@@ -254,35 +296,29 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       });
     }
 
+    // merge() rejects only if the overlay itself throws, which is this
+    // extension's own bug and not something the user can do anything about --
+    // overlay.js itself anticipates createObjectURL rejecting on a non-Blob. It
+    // still has to end here: the promise has no other consumer, so an unhandled
+    // rejection per click is a strictly worse way to learn about it than one
+    // named line in the console.
+    function start() {
+      return merge().catch(reportUnexpected);
+    }
+
     button.addEventListener('click', function (event) {
       // Constraint 3, and preventDefault with it: without both, X's own handler
       // opens the media viewer over the top of the composite.
       event.preventDefault();
       event.stopPropagation();
-      merge();
+      start();
     });
   }
 
   XIW.button = { mount: mount };
 
-  // The post's own [data-testid="tweetPhoto"] containers, in document order.
-  //
-  // dom.js applies exactly this rule and keeps it private, so it is repeated
-  // rather than borrowed: XIW exports no accessor for "the elements this root
-  // owns", and modifying dom.js is not this task's to do. The two must be
-  // changed together -- if dom.js ever stops excluding quoted media, the first
-  // photo's parent is no longer necessarily this post's row.
-  function ownPhotos(root) {
-    var matched = root.querySelectorAll(XIW.SELECTORS.tweetPhoto);
-    var kept = [];
-    for (var i = 0; i < matched.length; i++) {
-      var quote = matched[i].closest(XIW.SELECTORS.quoteTweet);
-      // The identity check is not redundant: closest() matches a root that IS a
-      // quote wrapper, and dom.js counts that wrapper's media as its own.
-      if (quote && quote !== root && root.contains(quote)) continue;
-      kept.push(matched[i]);
-    }
-    return kept;
+  function reportUnexpected(err) {
+    console.error('X Image Weaver: the overlay threw while showing a composite', err);
   }
 
   // `position: relative` on the row is what makes the button's `absolute` mean
@@ -292,6 +328,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   function positionRow(row) {
     var view = row.ownerDocument && row.ownerDocument.defaultView;
     var position = '';
+    var zIndex = '';
     if (view && typeof view.getComputedStyle === 'function') {
       // getComputedStyle is the honest question -- the value can come from a
       // stylesheet rule, not only from an inline style -- and it throws on
@@ -299,11 +336,27 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       // propagating: a row we cannot measure is a row we make positioned.
       try {
         position = view.getComputedStyle(row).position || '';
+        zIndex = view.getComputedStyle(row).zIndex || '';
       } catch {
         position = '';
+        zIndex = '';
       }
     }
     if (position === '' || position === 'static') row.style.position = 'relative';
+
+    // A stacking context on the row, and this is the second half of why the
+    // button's own z-index is safe. A positioned element with z-index: auto does
+    // not create one, so without this the button's z-index is compared against
+    // every z-index on the page -- and X's own modals and menus sit in the
+    // hundreds. With one, the comparison is confined to the media row, where the
+    // values in play are single digits, and the button cannot out-paint X's
+    // overlay chrome either, which is correct: an overlay that covers the media
+    // is entitled to cover the control that sits on it.
+    //
+    // Only written when the row has none. Overwriting a z-index X chose would
+    // demote the row itself, and a row that already has one already is a
+    // stacking context, so there is nothing to add.
+    if (zIndex === '' || zIndex === 'auto') row.style.zIndex = '0';
   }
 
   // One stylesheet for the page, found by its own class. Injected per document

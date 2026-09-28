@@ -31,6 +31,7 @@ import { loadAll } from './harness.mjs';
 const BUTTON = 'button.xiw-merge-button';
 const ARIA_LABEL = 'Merge images into one';
 const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
+const originalConsoleError = console.error;
 
 // A fresh document and a fresh module instance per test: loadAll() resets XIW
 // and re-evaluates the six manifest scripts, and a new fixture document keeps
@@ -38,7 +39,21 @@ const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
 function setup({ photos = [], videos = 0, quote = null, tweetId = '123', handle = 'ada', stitch, realOverlay = false } = {}) {
   const document = tweetFixture({ photos, videos, quote, tweetId, handle });
   const window = document.defaultView;
-  const XIW = loadAll({ document });
+
+  // A subclass, not a plain object, and not a patch of the real URL: the harness
+  // resolves its own file paths with the global `new URL(...)`, so replacing that
+  // global with a stub breaks the loader running these tests. Extending it leaves
+  // every other use intact. Needed by the tests that keep the real overlay,
+  // because show() creates an object URL and jsdom does not implement it.
+  class StubURL extends URL {
+    static createObjectURL() {
+      return 'blob:test/0';
+    }
+
+    static revokeObjectURL() {}
+  }
+
+  const XIW = loadAll({ document, URL: StubURL });
 
   const stitched = [];
   const shown = [];
@@ -148,6 +163,20 @@ test('the button is a child of the media row for a 2-photo and a 4-photo post', 
 
 test('a quoted post\'s media never decides where the outer button lands', () => {
   const t = setup({ photos: ['aa', 'bb'], quote: { photos: ['cc', 'dd'] } });
+  // One rule, two consumers: dom.js exports XIW.ownElements and this file reads
+  // it rather than keeping a copy, so the button and the ids it stitches cannot
+  // come to disagree about which media this post owns. The two tests either side
+  // of this one are that claim, asserted through both call sites.
+  assert.equal(typeof t.XIW.ownElements, 'function', 'the ownership rule is exported, not duplicated');
+  // Structural guard against the copy this file used to keep: button.js has no
+  // business reading X's quoteTweet selector for itself -- the rule belongs to
+  // dom.js and arrives as XIW.ownElements -- and the rule itself is written once.
+  // Matched on the code form, because mount()'s JSDoc legitimately names
+  // div[data-testid="quoteTweet"] as one of the two root types it takes.
+  const buttonSource = readFileSync(new URL('../src/button.js', import.meta.url), 'utf8');
+  const domSource = readFileSync(new URL('../src/dom.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(buttonSource, /XIW\.SELECTORS\.quoteTweet/, 'button.js never re-derives quote ownership for itself');
+  assert.equal((domSource.match(/function isQuotedBy/g) || []).length, 1, 'and dom.js holds the one copy of the rule');
   // The fixture appends the outer post's media before the quote, which is where
   // X renders it. Moving the quote first is the only way the first photo in
   // document order is the quoted post's, so this is the case where "just take the
@@ -194,6 +223,26 @@ test('a second mount for one root produces one button', () => {
   assert.equal(t.buttons().length, 1, 'idempotent in its own terms, whatever the caller does');
 });
 
+test('a re-mount repairs a row a re-render stripped, without adding a second button', () => {
+  const t = setup({ photos: ['aa', 'bb'] });
+  t.XIW.button.mount(t.roots()[0]);
+  const row = t.row();
+  const button = t.button();
+
+  // What a React commit does to an element it owns: the className it wrote is
+  // the className it writes back, and everything this extension added to that
+  // attribute goes with it. The button itself survives.
+  row.className = 'css-1dbjc4n';
+  row.removeAttribute('data-xiw-row');
+  assert.equal(row.classList.contains('xiw-media-row'), false, 'precondition: the row lost our class');
+
+  t.XIW.button.mount(t.roots()[0]);
+
+  assert.equal(t.buttons().length, 1, 'still one button');
+  assert.equal(row.className, 'css-1dbjc4n xiw-media-row', 'and the row-hover reveal is scoped to a class that is back');
+  assert.equal(row.getAttribute('data-xiw-row'), '', 'with the marker restored too');
+});
+
 // --- 3. it is a real button, and it is styled without X's help -----------------
 
 test('the control is a real labelled button with the required geometry', () => {
@@ -215,9 +264,14 @@ test('the control is a real labelled button with the required geometry', () => {
 
 test('the media row is made positioned, and only when it is not positioned already', () => {
   const bare = setup({ photos: ['aa', 'bb'] });
+  // An X-authored class on the row, which is what a clobbering
+  // `row.className = ROW_CLASS` would destroy along with the rest of the post's
+  // media styling. set here rather than in the fixture, which this file does not
+  // modify.
+  bare.row().className = 'css-1dbjc4n r-1ye8kvj';
   bare.XIW.button.mount(bare.roots()[0]);
   assert.equal(bare.row().style.position, 'relative', 'an unpositioned row is given position: relative');
-  assert.equal(bare.row().className, 'xiw-media-row', 'and the class the reveal rule is scoped to');
+  assert.equal(bare.row().className, 'css-1dbjc4n r-1ye8kvj xiw-media-row', "X's own row classes are added to, not replaced");
 
   // X lays its media out with positioned cells, and overwriting one of those
   // would move the post's images to be our button's containing block.
@@ -229,6 +283,29 @@ test('the media row is made positioned, and only when it is not positioned alrea
 
     assert.equal(row.style.position, existing, `a row already positioned ${existing} keeps it`);
     assert.equal(t.buttons().length, 1, 'and still gets its button');
+  }
+});
+
+test('the media row is given a stacking context, and never one it already has', () => {
+  // A positioned element with z-index: auto is not a stacking context, so
+  // without this the button's z-index is compared against every z-index on the
+  // page -- where X's own modals live in the hundreds.
+  const bare = setup({ photos: ['aa', 'bb'] });
+  bare.XIW.button.mount(bare.roots()[0]);
+  assert.equal(bare.row().style.position, 'relative');
+  assert.equal(bare.row().style.zIndex, '0', 'a row with no z-index of its own gets one, which bounds the button to this subtree');
+
+  // Overwriting a z-index X chose would demote the row itself, and a row that
+  // already has one already is a stacking context.
+  for (const existing of ['0', '1', '5000']) {
+    const t = setup({ photos: ['aa', 'bb'] });
+    const row = t.row();
+    row.style.position = 'relative';
+    row.style.zIndex = existing;
+    t.XIW.button.mount(t.roots()[0]);
+
+    assert.equal(row.style.zIndex, existing, `a row already at z-index ${existing} keeps it`);
+    assert.equal(t.button().style.zIndex, '2', 'and the button keeps the small value, now bounded to inside that context');
   }
 });
 
@@ -251,6 +328,11 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   assert.match(css, /\.xiw-merge-button:focus-within/, 'and on its own focus-within, so Tab reaches a visible control');
   assert.match(css, /\.xiw-merge-button \{(?:[^}]*)opacity:\s*0;/, 'invisible by default');
   assert.match(css, /transition:\s*opacity 0\.12s/, 'fading rather than blinking');
+  assert.match(
+    css,
+    /\.xiw-merge-button\.xiw-merge-button--busy \{(?:[^}]*)pointer-events:\s*none/,
+    'the busy state refuses the pointer, which is the mouse half of aria-disabled'
+  );
   assert.doesNotMatch(css, /(^|[^-])button\s*\{/, 'no rule that X could read as one of its own buttons');
 });
 
@@ -299,7 +381,7 @@ test('a post that stops being mergeable after mount does nothing when clicked', 
   assert.equal(video.shown.length, 0, 'no overlay');
   assert.equal(video.shownErrors.length, 0, 'and no error: this is a silent no-op, not a failure');
   assert.equal(withVideo.defaultPrevented, true, 'though the event was still stopped before X could see it');
-  assert.equal(video.button().disabled, false, 'and the button never went busy');
+  assert.equal(video.button().hasAttribute('aria-disabled'), false, 'and the button never went busy');
   assert.equal(video.button().textContent, 'Merge');
 
   const emptied = setup({ photos: ['aa', 'bb'] });
@@ -360,7 +442,7 @@ test('a successful stitch hands the composite and the post\'s meta to the overla
   assert.deepEqual(options.meta, { tweetId: '1234567890', handle: 'ada' }, 'and the real tweetMeta of this post');
 
   const button = t.button();
-  assert.equal(button.disabled, false, 'the button is idle again');
+  assert.equal(button.hasAttribute('aria-disabled'), false, 'the button is idle again');
   assert.equal(button.textContent, 'Merge', 'with its idle label');
   assert.equal(button.hasAttribute('aria-busy'), false, 'and no busy state left behind');
   assert.equal(button.className, 'xiw-merge-button', 'and no busy class');
@@ -386,7 +468,7 @@ test('a failed stitch hands the error and a retry to the overlay, and the button
   assert.equal(typeof onRetry, 'function', 'with a function for the overlay to put behind its Retry control');
 
   const button = t.button();
-  assert.equal(button.disabled, false, 'the button is idle on failure too');
+  assert.equal(button.hasAttribute('aria-disabled'), false, 'the button is idle on failure too');
   assert.equal(button.textContent, 'Merge');
   assert.equal(button.hasAttribute('aria-busy'), false);
   assert.equal(button.className, 'xiw-merge-button');
@@ -415,7 +497,7 @@ test('the retry re-runs the same body, and it re-collects the media as well', as
   assert.equal(t.stitched.length, 2, 'a second attempt, from the same closure');
   assert.deepEqual(t.stitched[1], ['aa', 'swapped'], 'and it re-collects the media rather than replaying the first answer');
   assert.equal(t.shownErrors.length, 2, 'a retry that fails again reports again');
-  assert.equal(t.buttons()[0].disabled, false, 'and the button is idle once more');
+  assert.equal(t.buttons()[0].hasAttribute('aria-disabled'), false, 'and the button is idle once more');
 });
 
 test('Retry in the real overlay is a click that re-runs the same body', async () => {
@@ -444,7 +526,7 @@ test('Retry in the real overlay is a click that re-runs the same body', async ()
   await t.settle();
 
   assert.equal(t.stitched.length, 2, 'the Retry control is what re-ran the same body');
-  assert.equal(t.button().disabled, false, 'and the button is idle again');
+  assert.equal(t.button().hasAttribute('aria-disabled'), false, 'and the button is idle again');
 });
 
 // --- 7. the busy state ------------------------------------------------------------
@@ -464,20 +546,135 @@ test('a second click while the first stitch is in flight does nothing', async ()
   t.click(button);
   await t.settle();
   assert.equal(t.stitched.length, 1, 'the first click started a stitch');
-  assert.equal(button.disabled, true, 'and the button says so: disabled, aria-busy, and a different label');
-  assert.equal(button.getAttribute('aria-busy'), 'true');
+  assert.equal(button.getAttribute('aria-busy'), 'true', 'and the button says so: aria-busy, aria-disabled and a different label');
+  assert.equal(button.getAttribute('aria-disabled'), 'true', 'reported unavailable without leaving the tab order');
+  assert.equal(button.disabled, false, 'and NOT the disabled attribute, which would drop the focus it already has');
   assert.equal(button.textContent, 'Merging...');
-  assert.match(button.className, /xiw-merge-button--busy/, 'and the class that keeps it visible when the pointer leaves the row');
+  assert.match(button.className, /xiw-merge-button--busy/, 'and the class that keeps it visible and refuses the pointer');
 
+  // Focus is the reason. A disabled button cannot hold it, so setting the
+  // attribute here would move a keyboard user's focus to <body> and re-enabling
+  // it would not move it back.
+  button.focus();
+  assert.equal(t.document.activeElement, button, 'the busy button still takes focus');
   t.click(button);
   await t.settle();
   assert.equal(t.stitched.length, 1, 'a second click while busy is refused rather than starting a second composite');
   assert.equal(t.shown.length, 0, 'nothing shown while the first is still running');
+  assert.equal(t.document.activeElement, button, 'and refusing it did not cost the focus either');
 
   release();
   await t.settle();
   assert.equal(t.shown.length, 1, 'and the first attempt is still the one that lands');
-  assert.equal(button.disabled, false, 'with the button idle again');
+  assert.equal(button.hasAttribute('aria-disabled'), false, 'with the button idle again');
+});
+
+// --- 7b. focus, which the busy state used to destroy -----------------------------
+//
+// The real overlay, because the claim is about what the overlay does with
+// document.activeElement: open() snapshots it and hide() gives it back. A
+// recorder for the overlay could not see either.
+
+test('a keyboard user still holds the Merge button when the overlay opens and when it closes', async () => {
+  const t = setup({ photos: ['aa', 'bb'], realOverlay: true });
+  const focusedAtOpen = [];
+  const realShow = t.XIW.overlay.show;
+  t.XIW.overlay.show = (options) => {
+    focusedAtOpen.push(t.document.activeElement);
+    realShow.call(t.XIW.overlay, options);
+  };
+
+  t.XIW.button.mount(t.roots()[0]);
+  const button = t.button();
+  button.focus();
+  // What Enter produces in a browser, and the one path that has no hover to
+  // reveal the control first.
+  button.click();
+  await t.settle();
+
+  assert.equal(t.stitched.length, 1, 'the keyboard activation started the stitch');
+  assert.deepEqual(focusedAtOpen, [button], 'and the overlay was handed the button, not <body>');
+
+  t.XIW.overlay.hide();
+  assert.equal(t.document.activeElement, button, 'and closing gave the focus back to it, so the next Tab continues from the post');
+  assert.equal(button.getAttribute('aria-disabled'), null, 'with the control live again');
+});
+
+// --- 7c. nothing escapes as an unhandled rejection ------------------------------
+//
+// Two call sites, two tests: the click, and the retry the overlay's own control
+// invokes. Both promises have no other consumer, so both have to end in a catch.
+
+async function captureEscapes(run) {
+  const unhandled = [];
+  const errors = [];
+  // With a listener attached Node reports an unhandled rejection as an event
+  // rather than raising it, so this observes the promise instead of dying on it.
+  const onUnhandled = (reason) => unhandled.push(reason);
+  const onError = (...args) => errors.push(args);
+  process.on('unhandledRejection', onUnhandled);
+  console.error = onError;
+  try {
+    await run();
+    // Two macrotasks: one for the click handler's promise chain, one for Node to
+    // decide the rejection had no handler.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+    console.error = originalConsoleError;
+  }
+  return { unhandled, errors };
+}
+
+test('a throw from the overlay is named once, not left as an unhandled rejection', async () => {
+  const { unhandled, errors } = await captureEscapes(async () => {
+    const t = setup({ photos: ['aa', 'bb'], realOverlay: true });
+    // overlay.js anticipates this: it says a non-Blob blob means the caller's
+    // await has already rejected and createObjectURL throws on top of it.
+    const boom = new Error('Failed to execute createObjectURL: parameter 1 is not of type Blob');
+    t.XIW.overlay.show = () => {
+      throw boom;
+    };
+
+    t.XIW.button.mount(t.roots()[0]);
+    t.click(t.button());
+    await t.settle();
+  });
+
+  assert.deepEqual(unhandled, [], 'no rejected promise escaped');
+  assert.equal(errors.length, 1, 'and it was named in the console once');
+  assert.equal(errors[0][0], 'X Image Weaver: the overlay threw while showing a composite');
+  assert.match(errors[0][1].message, /createObjectURL/, 'with the error itself rather than a string about it');
+});
+
+test('the same for the retry path, whose promise the overlay never consumes', async () => {
+  const { unhandled, errors } = await captureEscapes(async () => {
+    let attempts = 0;
+    let t;
+    t = setup({
+      photos: ['aa', 'bb'],
+      realOverlay: true,
+      // Fails once so the real overlay records a retry, succeeds after so the
+      // retry reaches show().
+      stitch: () => (attempts++ === 0
+        ? Promise.reject(new t.XIW.StitchError('NETWORK', 'HTTP 404 for media aa'))
+        : Promise.resolve({ blob: new t.window.Blob(['x'], { type: 'image/png' }), format: 'image/png' })),
+    });
+    t.XIW.overlay.show = () => {
+      throw new Error('Failed to execute createObjectURL: parameter 1 is not of type Blob');
+    };
+
+    t.XIW.button.mount(t.roots()[0]);
+    t.click(t.button());
+    await t.settle();
+    const retry = t.document.querySelector('[data-xiw-overlay]').shadowRoot.querySelector('.retry');
+    retry.dispatchEvent(new t.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await t.settle();
+  });
+
+  assert.deepEqual(unhandled, [], 'no rejected promise escaped from the retry either');
+  assert.equal(errors.length, 1, 'and it was named once, by the same line');
 });
 
 // --- 8. the shape of the file, which the behaviour above cannot check -------------

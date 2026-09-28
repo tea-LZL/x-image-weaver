@@ -22,14 +22,18 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // gallery. null is the common answer -- most posts on the timeline are not split
   // galleries -- so it has to be cheap and quiet: a pure read, no logging, no
   // throwing, no mutation of what it inspected.
+  //
+  // Reads XIW.ownElements rather than a local copy of it, which is the whole
+  // reason that is exported: the two callers that need to know which media a
+  // root OWNS must not be able to disagree about it.
   XIW.collectPhotoIds = function collectPhotoIds(root) {
     if (!isQueryable(root)) return null;
 
     // Mixed media is not a split gallery. Refuse the whole post rather than
     // merging the photos and quietly dropping the video.
-    if (ownElements(root, XIW.SELECTORS.videoPlayer).length > 0) return null;
+    if (XIW.ownElements(root, XIW.SELECTORS.videoPlayer).length > 0) return null;
 
-    var photos = ownElements(root, XIW.SELECTORS.tweetPhoto);
+    var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
     if (photos.length < 2) return null;
 
     var ids = [];
@@ -60,7 +64,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // attribute is what carries the status id. Own-elements for the same reason as
     // the author cell below: a permalink inside a quoted post is the quoted post's
     // id, and two lookups in one function should not disagree about ownership.
-    var permalink = ownElements(root, XIW.SELECTORS.tweetPermalink)[0];
+    var permalink = XIW.ownElements(root, XIW.SELECTORS.tweetPermalink)[0];
     if (permalink) {
       var status = /\/status\/(\d+)/.exec(permalink.getAttribute('href') || '');
       if (status) meta.tweetId = status[1];
@@ -80,7 +84,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // subtree, so an outer post whose own author cell has not rendered would
     // otherwise adopt the quoted post's author cell and report the quoted author
     // as its own.
-    var authorCell = ownElements(root, XIW.SELECTORS.userName)[0];
+    var authorCell = XIW.ownElements(root, XIW.SELECTORS.userName)[0];
     if (!authorCell) return '';
 
     var links = authorCell.querySelectorAll(XIW.SELECTORS.profileLink);
@@ -102,17 +106,42 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // keeps it off the shared global, not this.
   var HANDLE_PATH = /^\/[A-Za-z0-9_]{1,15}$/;
 
-  // Everything matching `selector` under root that root itself owns, in document
-  // order. A quoted post's media is left out so it stays attributable to the
-  // quoted root.
-  function ownElements(root, selector) {
+  /**
+   * @function XIW.ownElements
+   * @param {Element} root
+   * @param {string} selector Any of XIW.SELECTORS.
+   * @returns {Element[]} Everything matching `selector` under root that root
+   *   itself owns, in document order. A quoted post's elements are left out so
+   *   they stay attributable to the quoted root.
+   * @description Exported because "which elements does this root own" is a
+   * question with exactly one answer and this file was answering it twice.
+   * There are two consumers and they need different things from it:
+   *
+   *   - collectPhotoIds, above, which turns the photos into ids and refuses a
+   *     post that is not a mergeable gallery.
+   *   - button.js, which appends the Merge button to the parent of the first
+   *     element this returns for [data-testid="tweetPhoto"]. An outer post
+   *     quoting a two-photo post has four photo containers, and the difference
+   *     between a button that merges this post's images and one that merges the
+   *     quoted post's is entirely this filter.
+   *
+   * It was a private helper with a copy in button.js, and the copy is the worse
+   * of the two risks: the canonical rule lives here, so a maintainer editing
+   * isQuotedBy below would have had no signal from the other file at all. A
+   * divergence cannot break the composite -- the ids still come from
+   * collectPhotoIds -- but it does move the button onto the quoted post's media
+   * row, silently, on exactly the posts where a user would be merging a quote.
+   * If this rule ever needs to change, this is the only copy.
+   * @see isQuotedBy, below, for the rule itself.
+   */
+  XIW.ownElements = function ownElements(root, selector) {
     var matched = root.querySelectorAll(selector);
     var kept = [];
     for (var i = 0; i < matched.length; i++) {
       if (!isQuotedBy(matched[i], root)) kept.push(matched[i]);
     }
     return kept;
-  }
+  };
 
   // True when `element`'s nearest quote wrapper sits strictly below root, which
   // makes the media belong to a quoted post inside this one.
