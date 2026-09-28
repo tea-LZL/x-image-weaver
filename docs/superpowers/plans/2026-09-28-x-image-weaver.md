@@ -39,7 +39,9 @@ Five input classes or failure modes the spec implies that no naive test would ca
 
 **Files:**
 - Create: `manifest.json`
-- Create: `src/core.js` (namespace + `VERSION` only; pure helpers arrive in Task 2)
+- Create: `src/core.js` (namespace, `VERSION`, and `TUNABLES`; the pure helpers arrive in Task 2)
+- Create: `src/dom.js`, `src/button.js`, `src/stitch.js`, `src/overlay.js`, `src/main.js`
+  (one-line namespace stubs, each replaced by a later task)
 - Create: `test/harness.mjs`
 - Create: `test/loader.test.mjs`
 - Create: `.gitignore`
@@ -91,7 +93,7 @@ test('core.js declares tunables with the spec values', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: FAIL — `ENOENT` on `src/core.js`, which does not exist yet.
 
 - [ ] **Step 3: Create `src/core.js` with the namespace and tunables**
@@ -100,34 +102,51 @@ First line is exactly the `var` namespace line from Global Constraints. Then `XI
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS, 2 tests.
 
-- [ ] **Step 5: Create `manifest.json`**
+- [ ] **Step 5: Create the five not-yet-implemented source files as stubs**
+
+`manifest.json` names all six scripts, and Chrome refuses to load a content script whose
+file is missing — so every commit from this one forward must have all six present. Create
+`src/dom.js`, `src/button.js`, `src/stitch.js`, `src/overlay.js`, and `src/main.js`, each
+containing nothing but the `var XIW` namespace line and a one-line comment naming the task
+that implements it.
+
+Each later task **replaces** its stub wholesale. A stub that survives into a final review
+is a defect: a stub in `src/main.js` means the extension silently does nothing.
+
+- [ ] **Step 6: Create `manifest.json`**
 
 Exactly the manifest in the spec's "Manifest and permissions" section, verbatim, including
 `minimum_chrome_version` and the empty permission arrays. Do not add `"default_popup"`.
 
-- [ ] **Step 6: Create the three icon PNGs**
+- [ ] **Step 7: Create the three icon PNGs**
 
 Solid-color square PNGs at 16, 48, and 128. Any generator will do; they are placeholders that
 satisfy the manifest so Chrome does not warn on load. Do not spend time on artwork.
 
-- [ ] **Step 7: Create `.gitignore`**
+- [ ] **Step 8: Create `.gitignore`**
 
 ```
 node_modules/
 ```
 
-- [ ] **Step 8: Verify Chrome accepts the package**
+- [ ] **Step 9: Verify Chrome accepts the package**
 
 Run: `ls -R .` and confirm `manifest.json`, `src/`, `icons/`, `test/`, `docs/` all exist and
 that `manifest.json` parses as JSON (`node -e "JSON.parse(require('fs').readFileSync('manifest.json'))"` — expect no output and exit 0).
 
-- [ ] **Step 9: Commit**
+Then confirm every script the manifest names actually exists:
+
+Run: `node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json'));const fs=require('fs');for(const p of m.content_scripts[0].js){if(!fs.existsSync(p))throw new Error('missing '+p)};console.log('all scripts present')"`
+Expected: prints `all scripts present`. This is the gate that Task 1 would otherwise fail
+Chrome's loader on.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add manifest.json src/core.js test/harness.mjs test/loader.test.mjs .gitignore icons/
+git add manifest.json src/core.js src/dom.js src/button.js src/stitch.js src/overlay.js src/main.js test/harness.mjs test/loader.test.mjs .gitignore icons/
 git commit -m "chore: extension skeleton with shared XIW namespace and manifest"
 ```
 
@@ -332,7 +351,7 @@ The selector map from the spec's DOM contract table, verbatim: `tweet`,
 
 - [ ] **Step 12: Run the full suite to verify everything passes**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS, all tests across all four test files.
 
 - [ ] **Step 13: Commit**
@@ -492,7 +511,7 @@ First line is the `var XIW` namespace line. Then:
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS, all tests including the 10 in `dom.test.mjs`.
 
 - [ ] **Step 7: Commit**
@@ -563,7 +582,7 @@ whichever encoding succeeded. If the JPEG retry also yields `null`, reject with
 
 - [ ] **Step 6: Verify the file parses and the namespace is well-formed**
 
-Run: `node --test test/ && node -e "new (require('vm').Script)(require('fs').readFileSync('src/stitch.js','utf8'))"`
+Run: `node --test test/*.test.mjs && node -e "new (require('vm').Script)(require('fs').readFileSync('src/stitch.js','utf8'))"`
 Expected: all tests still PASS and no `SyntaxError` from the second command. This is a
 syntax gate, not a behavior test — say so in the commit body.
 
@@ -626,7 +645,7 @@ only, which preserves the user-gesture requirement.
 
 - [ ] **Step 6: Add a syntax and namespace gate**
 
-Run: `node --test test/ && node -e "new (require('vm').Script)(require('fs').readFileSync('src/overlay.js','utf8'))"`
+Run: `node --test test/*.test.mjs && node -e "new (require('vm').Script)(require('fs').readFileSync('src/overlay.js','utf8'))"`
 Expected: tests PASS, no `SyntaxError`.
 
 - [ ] **Step 7: Commit**
@@ -692,7 +711,7 @@ clear the busy state, including on rejection.
 
 - [ ] **Step 6: Run the automated suite**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS. This file adds no tests; the run confirms nothing regressed.
 
 - [ ] **Step 7: Commit**
@@ -742,7 +761,7 @@ Expected: prints the six scripts in order with `src/main.js` last.
 
 - [ ] **Step 5: Run the automated suite**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -778,7 +797,7 @@ it must be written out rather than linked.
 
 - [ ] **Step 3: Run the full automated suite one final time**
 
-Run: `node --test test/`
+Run: `node --test test/*.test.mjs`
 Expected: PASS, every test, no failures and no skipped tests.
 
 - [ ] **Step 4: Verify the extension loads in Chrome with no errors**
