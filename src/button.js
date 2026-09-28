@@ -260,35 +260,42 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       if (ids === null) return;
 
       setBusy(true);
-      var composite = null;
-      var failure = null;
-      // A boolean beside the error rather than a test of the error itself: a
-      // rejection reason is whatever was thrown, and `undefined` is a value
-      // something can reject with.
-      var failed = false;
       try {
-        composite = await XIW.stitchVertical(ids);
+        var composite = await XIW.stitchVertical(ids);
       } catch (err) {
-        // Catch and re-raise through the overlay rather than leaving the promise
+        // Catch and route through the overlay rather than leaving the promise
         // rejected: this is the only failure this extension has a UI for, and
-        // the user asked for an image, not for a console entry.
-        failed = true;
-        failure = err;
-      } finally {
-        setBusy(false);
-      }
-
-      if (failed) {
-        // Retry is the same closure, called from the overlay's Retry click
-        // handler and from nowhere else, which is what keeps the user gesture
-        // attached to the work: the retry re-stitches inside a click the user
-        // just made rather than from a timer. start() rather than merge() so
-        // neither call site can leave a rejected promise unhandled.
-        XIW.overlay.showError(failure, function retry() {
+        // the user asked for an image, not for a console entry. Returning here
+        // is what discriminates the two outcomes -- only a stitch that resolved
+        // reaches the show() below -- so there is no flag carrying an outcome
+        // across the finally and no value tested for truthiness, which is what a
+        // rejection reason of `undefined` would have needed guarding against.
+        //
+        // Retry is the same closure, called from the overlay's Retry click handler
+        // and from nowhere else, which is what keeps the user gesture attached to
+        // the work: the retry re-stitches inside a click the user just made
+        // rather than from a timer. start() rather than merge() so neither call
+        // site can leave a rejected promise unhandled.
+        XIW.overlay.showError(err, function retry() {
           return start();
         });
         return;
+      } finally {
+        // Last, and in a finally so both paths are covered by construction. It
+        // used to have to run before the overlay calls, to restore idle state
+        // ahead of the overlay snapshotting document.activeElement -- a
+        // constraint that only existed while the button carried the disabled
+        // attribute, and which aria-disabled removes along with the focus loss
+        // that made it look necessary.
+        setBusy(false);
       }
+
+      // Outside the try on purpose. Inside it, a throw from the overlay -- a
+      // non-Blob blob, which overlay.js says is reachable and which createObjectURL
+      // throws on -- would be caught by the stitch's own catch and shown to the
+      // user as a failed merge, which is a lie about an internal bug and hides it
+      // behind a Retry. Here it propagates to start() instead, and is named in
+      // the console as what it is.
       XIW.overlay.show({
         blob: composite.blob,
         format: composite.format,
