@@ -219,7 +219,8 @@ The overlay is a lazily-created singleton: one host element with `attachShadow({
 - Backdrop `rgba(0, 0, 0, 0.92)`, image `object-fit: contain` at 92vh / 92vw.
 - Close via the `✕` control, `Escape`, or a backdrop click. Body scroll is locked while open
   and restored on close.
-- One action: **Download PNG**, via a synthetic `<a download>` click on the object URL. This
+- One action: **Download** (deliberately not labelled "Download PNG" — the label would lie
+  whenever the JPEG fallback fires), via a synthetic `<a download>` click on the object URL. This
   needs no `chrome.downloads` permission, which is why the manifest can declare none.
 - Filename: `x-image-weaver-<handle>-<tweetId>.png`, both values read from the DOM.
 - Object URLs are revoked when replaced and when the overlay closes.
