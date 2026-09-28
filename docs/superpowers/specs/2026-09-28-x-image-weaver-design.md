@@ -269,8 +269,15 @@ and requires no grant prompt; the site-access notice for the listed origins is i
 content scripts.
 
 `minimum_chrome_version` is 103 because `AbortSignal.timeout` — used for the per-image
-fetch deadline — first shipped there. `createImageBitmap` and Shadow DOM are far older and
-constrain nothing.
+fetch deadline — first shipped there (confirmed against MDN's browser-compat data).
+`createImageBitmap` and Shadow DOM are far older and constrain nothing.
+
+One nuance of that floor, which the code deliberately does not depend on: Chrome 103–123
+implemented `AbortSignal.timeout` as a *partial* implementation that always rejects with an
+`AbortError` rather than a `TimeoutError`; full support landed in Chrome 124. The stitch
+pipeline maps every rejection to `StitchError('NETWORK')` without inspecting the error's
+name, so the difference is invisible here — but any future code that branches on
+`err.name === 'TimeoutError'` would behave differently below Chrome 124.
 
 **CORS needs no workaround.** `pbs.twimg.com` reflects the request `Origin` back in
 `access-control-allow-origin` (and sends `*` when no `Origin` is present) — verified against

@@ -579,7 +579,7 @@ plus `await img.decode()`. On decode failure of both paths, reject with
 Call `XIW.computeCanvasSize(tiles)`. Create the canvas at the returned `width`/`height`.
 `fillStyle = '#fff'` and fill the whole canvas so a JPEG export is valid and no page
 background shows through. Then walk the tiles in order, drawing each at
-`tile.width * scale` by `tile.height * height`, at `x = (canvas.width - drawWidth) / 2` and
+`tile.width * scale` by `tile.height * scale`, at `x = (canvas.width - drawWidth) / 2` and
 the running `y`. Call `ImageBitmap.close()` on each tile immediately after drawing it —
 unreleased bitmaps are a real leak over a long scroll session.
 
