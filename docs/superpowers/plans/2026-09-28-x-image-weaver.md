@@ -498,12 +498,18 @@ Expected: FAIL — `src/dom.js` does not exist.
 First line is the `var XIW` namespace line. Then:
 
 - `collectPhotoIds(root)`: query `XIW.SELECTORS.tweetPhoto` under `root` and filter out any
-  element having a `[data-testid="quoteTweet"]` ancestor (use `closest`, which walks up past
-  `root` itself). Same treatment for `videoPlayer`. Return `null` on any video, on fewer than
-  two photos, or if any photo fails to yield an id via the fallback chain
-  `img.currentSrc` → `img.src` → first descendant with a non-empty inline `background-image`.
-  For the background fallback, extract the URL from between the `url(` and the closing `)`.
-  Preserve order and duplicates; do not use a Set.
+  element that is quoted by a `[data-testid="quoteTweet"]` wrapper **strictly below `root`**.
+  Use `quote !== root && root.contains(quote)` on the element's `closest(quoteTweet)`, not
+  `contains` alone: `Node.contains` is an *inclusive* descendant test, so `contains(root)`
+  is true when `root` is the `quoteTweet` div itself, and every own element would be
+  discarded — making both exports return empty for a root type the spec names. Same treatment
+  for `videoPlayer`. Return `null` on any video, on fewer than two photos, or if any photo
+  fails to yield an id via the fallback chain `img.currentSrc` → `img.src` → first descendant
+  with a non-empty inline `background-image`. For the background fallback, extract the URL
+  from between the `url(` and the closing `)`. Preserve order and duplicates; do not use a Set.
+- `tweetMeta(root)`: apply the same own-elements filter to both lookups, so a quoted post's
+  handle and tweetId cannot leak into the outer post. `root.querySelector` searches the whole
+  subtree and will otherwise return the quoted post's values.
 - `tweetMeta(root)`: read the tweet ID from the first `a[href*="/status/"]` match via
   `/\/status\/(\d+)/`. Read the handle from the **profile anchor's href** inside
   `[data-testid="User-Name"]`, not from that element's `textContent` — X renders the cell as
@@ -517,7 +523,7 @@ First line is the `var XIW` namespace line. Then:
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `node --test test/*.test.mjs`
-Expected: PASS, all tests including the 10 in `dom.test.mjs`.
+Expected: PASS, all tests including every case in `dom.test.mjs`.
 
 - [ ] **Step 7: Commit**
 

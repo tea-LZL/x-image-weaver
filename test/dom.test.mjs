@@ -31,14 +31,43 @@ test('returns null when a video is mixed in with photos', () => {
   assert.equal(collectPhotoIds(first(doc)), null);
 });
 
-test('returns null for a video-only post', () => {
-  const doc = tweetFixture({ photos: [], videos: 1 });
+// Two photos clear the two-photo gate, so a null here can only have come from the
+// video rule. That is the whole point of giving a "video" test real photos: with
+// zero photos the gate returns null first, the video is never counted, and the
+// test still passed after the video rule was deleted outright.
+test('returns null for a video alongside a mergeable photo count', () => {
+  const doc = tweetFixture({ photos: ['aaa', 'bbb'], videos: 1 });
   assert.equal(collectPhotoIds(first(doc)), null);
 });
 
 test('falls back to background-image when src is absent', () => {
   const doc = tweetFixture({ photos: [null, 'bbb'] });
   assert.deepEqual(collectPhotoIds(first(doc)), ['aaa', 'bbb']);
+});
+
+// The quote wrapper is a root type in its own right -- the spec names it, and
+// Task 7 passes it as one -- so the wrapper itself has to answer for the post it
+// wraps. Its inner media is at or below it, but it is not *inside* itself, and
+// Node.contains is inclusive: wrapper.contains(wrapper) is true. Treat the
+// wrapper as a boundary only when it is strictly below the root, or every quoted
+// post silently loses its button.
+test('attributes quoted media to the quote wrapper used as the root', () => {
+  const doc = tweetFixture({ photos: [], quote: { photos: ['inner1', 'inner2'] } });
+  const quoteRoot = doc.querySelector('div[data-testid="quoteTweet"]');
+  assert.deepEqual(collectPhotoIds(quoteRoot), ['inner1', 'inner2']);
+});
+
+// The same inclusive-contains call governs the meta lookups, so the wrapper root
+// goes just as dead there: empty id, empty handle, and a filename of
+// x-image-weaver-unknown-unknown.png for a post whose real id and handle are
+// right there in the DOM.
+test('reads the quoted post meta from the quote wrapper used as the root', () => {
+  const doc = tweetFixture({
+    photos: [],
+    quote: { tweetId: '98765', handle: 'ada', photos: ['inner1', 'inner2'] },
+  });
+  const quoteRoot = doc.querySelector('div[data-testid="quoteTweet"]');
+  assert.deepEqual(tweetMeta(quoteRoot), { tweetId: '98765', handle: 'ada' });
 });
 
 test('returns null when any photo fails to parse', () => {
