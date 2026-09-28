@@ -216,9 +216,20 @@ The overlay is a lazily-created singleton: one host element with `attachShadow({
 **Shadow DOM is required, not stylistic.** X's global stylesheet mangles injected `img` and
 `div` elements; without the shadow boundary the composite renders wrong.
 
-- Backdrop `rgba(0, 0, 0, 0.92)`, image `object-fit: contain` at 92vh / 92vw.
+- Backdrop `rgba(0, 0, 0, 0.92)`. The image is `object-fit: contain` at **at most** 92vh /
+  92vw — that is an upper bound, not a fixed size, and the layout must reduce it as needed.
+  **The composite must never be covered by the overlay's own controls.** The toolbar sits
+  bottom-center and the close control top-right, both over the image band; if they are taken
+  out of flow to keep the stage full-height, they overlay the very rows a downscaled tall
+  stitch exists to show. Reserve their bands in the layout instead — the stage's available
+  height accounts for them, and the image caps at the smaller of 92vh and that available
+  height.
 - Close via the `✕` control, `Escape`, or a backdrop click. Body scroll is locked while open
   and restored on close.
+- The overlay **is** modal: it covers the viewport and locks scroll. So it says
+  `role="dialog"` with `aria-modal="true"`, and that claim is backed by an actual Tab cycle
+  across the shadow tree's controls. Announcing a modality the code does not implement lets a
+  keyboard user tab out into content the overlay covers.
 - One action: **Download** (deliberately not labelled "Download PNG" — the label would lie
   whenever the JPEG fallback fires), via a synthetic `<a download>` click on the object URL. This
   needs no `chrome.downloads` permission, which is why the manifest can declare none.
@@ -314,9 +325,20 @@ to break when X changes its DOM:
 - A photo with an unparseable URL poisons the whole result to `null`.
 - Duplicate media IDs are preserved.
 
-A headless browser is still out of scope; it would be needed to test the MutationObserver,
-React re-rendering, canvas drawing, and the overlay, none of which jsdom models. Those are
-covered by the manual checklist:
+A headless browser is still out of scope; it would be needed to test canvas drawing, the
+MutationObserver, React re-rendering, and real layout, none of which jsdom models. The
+overlay's *behavioral* contract is nonetheless testable under jsdom and must be, because a
+`ReferenceError` in all three of its close paths passed every gate that existed before this
+was written:
+
+- Each of the three close paths (`✕`, `Escape`, backdrop click) actually invokes `hide`.
+- Object URLs are revoked on replace and on close, and **not** revoked by `showError`.
+- `document.body.style.overflow` is saved on open and restored on close, and a second
+  `hide()` cannot double-restore.
+- The Retry control is focusable and visible only when a retry callback exists behind it.
+
+Layout and rendering remain manual-checklist items: jsdom has no layout engine, so it
+cannot tell you whether a control is covering the image.
 
 - Posts with 2, 3, and 4 images — button appears, composite is seamless.
 - Single image — no button.
