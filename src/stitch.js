@@ -23,7 +23,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
  *   - `'DECODE'` -- a response body could not be turned into something
  *     drawable: `createImageBitmap` failed *and* the `Image` + `decode()`
  *     fallback failed, or the decoded image reported zero width or height; or
- *     the canvas yielded no blob in either the PNG or the JPEG encoding.
+ *     the canvas could not be given a 2D context at all, which is a canvas too
+ *     large to allocate even inside the TUNABLES caps; or the canvas yielded no
+ *     blob in either the PNG or the JPEG encoding.
  *
  * Exceeding XIW.TUNABLES.MAX_CANVAS_HEIGHT or XIW.TUNABLES.MAX_CANVAS_AREA is
  * deliberately NOT one of these. computeCanvasSize answers with a smaller
@@ -72,19 +74,32 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // it can, and bitmaps are what decodeTile holds regardless of how the
     // fetch stage was scheduled.
     var tiles = [];
+    var canvas = null;
     try {
       for (var i = 0; i < blobs.length; i++) {
         var mediaId = mediaIds[i];
         var source = await decodeTile(blobs[i], mediaId);
         tiles.push(tileFrom(source, mediaId));
       }
-      return await encode(compose(tiles));
+      canvas = compose(tiles);
+      return await encode(canvas);
     } finally {
       // compose() already released each bitmap as it finished drawing it, which
       // is the point -- toBlob is the slow step and it should not run holding
       // every tile. This is the backstop for the paths that never got there: a
       // decode failure three parts in, or compose itself throwing.
       for (var j = 0; j < tiles.length; j++) releaseTile(tiles[j]);
+      // The backing store, released the same way. TUNABLES permits a canvas of
+      // up to MAX_CANVAS_AREA pixels, which at four bytes each is close to a
+      // gigabyte of allocation with no deterministic release anywhere else in
+      // this file. Assigning width resets the bitmap to 0x0 and hands it back.
+      // Safe against the resolved value: `await encode(...)` does not settle
+      // until toBlob has already produced the Blob, and the Blob holds its own
+      // bytes rather than a view onto the canvas.
+      if (canvas) {
+        canvas.width = 0;
+        canvas = null;
+      }
     }
   };
 
@@ -203,6 +218,24 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // the canvas would then sit on a black stripe rather than on white.
     context.fillStyle = '#fff';
     context.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Nearest-neighbour, and this is load-bearing rather than a preference.
+    // Smoothing defaults to true, and once the height cap has scaled the
+    // composite down, every tile lands on a non-integer destination origin and
+    // a non-integer height. Skia then filters, and the destination rows at each
+    // part boundary become a partial blend of that tile's last row against the
+    // white fill underneath -- a light seam on a dark photo, which is a seam.
+    // With filtering off, each destination pixel takes exactly one source
+    // pixel, so a fractional origin shifts the row selection by at most one row
+    // instead of blending two.
+    //
+    // The cost is that a heavily downscaled part is marginally more aliased
+    // than a mipmap-filtered draw would be. Seamlessness wins: the product
+    // promise is one image with no gap, and at scale === 1 -- the common case,
+    // every gallery that fits inside the caps -- smoothing has no visible effect
+    // at all, so this line costs nothing there. Do not helpfully turn it back
+    // on: the geometry above is exact, and smoothing is what would undo it.
+    context.imageSmoothingEnabled = false;
 
     // The three lines inside this loop are computeCanvasSize's arithmetic,
     // restated. It summed the tile heights into castHeight, scaled that by
