@@ -9,11 +9,18 @@ XIW.TUNABLES = {
   JPEG_FALLBACK_QUALITY: 0.95
 };
 
+// The whole of X's DOM contract, transcribed from the spec's table. Every
+// selector this extension evaluates lives here rather than inline in the file
+// that reads it, so the day X renames one data-testid is a one-line change in a
+// single place instead of a search across dom.js and button.js.
 XIW.SELECTORS = {
   tweet: 'article[data-testid="tweet"]',
   quoteTweet: 'div[data-testid="quoteTweet"]',
   tweetPhoto: 'div[data-testid="tweetPhoto"]',
-  videoPlayer: 'div[data-testid="videoPlayer"]'
+  videoPlayer: 'div[data-testid="videoPlayer"]',
+  userName: '[data-testid="User-Name"]',
+  profileLink: '[data-testid="User-Name"] a[href^="/"]',
+  tweetPermalink: 'a[href*="/status/"]'
 };
 
 // The host check is load-bearing, not the path match: a bare `/media/<id>` search

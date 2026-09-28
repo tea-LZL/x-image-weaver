@@ -35,7 +35,7 @@ XIW.collectPhotoIds = function collectPhotoIds(root) {
 };
 
 // The two strings a download filename is built from. Either can be missing --
-// not every post renders a permalink or a display name -- so each degrades to an
+// not every post renders a permalink or a profile link -- so each degrades to an
 // empty string and the filename degrades with it. The empty string is reported
 // rather than replaced here: downloadFilename is the only consumer and already
 // owns the 'unknown' fallback, and doing it in both places would make one of
@@ -45,19 +45,51 @@ XIW.tweetMeta = function tweetMeta(root) {
   if (!isQueryable(root)) return meta;
 
   // getAttribute, not .href: the selector matched the written attribute, and the
-  // attribute is what carries the status id.
-  var permalink = root.querySelector('a[href*="/status/"]');
+  // attribute is what carries the status id. Own-elements for the same reason as
+  // the author cell below: a permalink inside a quoted post is the quoted post's
+  // id, and two lookups in one function should not disagree about ownership.
+  var permalink = ownElements(root, XIW.SELECTORS.tweetPermalink)[0];
   if (permalink) {
     var status = /\/status\/(\d+)/.exec(permalink.getAttribute('href') || '');
     if (status) meta.tweetId = status[1];
   }
 
-  var userName = root.querySelector('[data-testid="User-Name"]');
-  if (userName) {
-    meta.handle = (userName.textContent || '').trim().replace(/^@/, '');
-  }
+  meta.handle = handleFromProfileLink(root);
   return meta;
 };
+
+// The handle is the profile anchor's href and nothing else. The author cell's
+// textContent is not a fallback: X renders the display name and the @handle
+// concatenated in that one element, so it reads "Ada Lovelace@ada", which does
+// not begin with an @ and which stripping a leading @ leaves untouched.
+function handleFromProfileLink(root) {
+  // The root's own author cell, by the same rule collectPhotoIds uses for media
+  // and for the same reason. A plain root.querySelector() searches the whole
+  // subtree, so an outer post whose own author cell has not rendered would
+  // otherwise adopt the quoted post's author cell and report the quoted author
+  // as its own.
+  var authorCell = ownElements(root, XIW.SELECTORS.userName)[0];
+  if (!authorCell) return '';
+
+  var links = authorCell.querySelectorAll(XIW.SELECTORS.profileLink);
+  for (var i = 0; i < links.length; i++) {
+    var href = links[i].getAttribute('href') || '';
+    // One segment or it is not a profile path. The cell also contains the
+    // /status/ permalink, and /i/user/<id> routes can appear here too; both are
+    // relative anchors, and neither is a handle. The grammar admits a single
+    // segment, so the last segment is the whole href after the slash.
+    if (HANDLE_PATH.test(href)) return href.slice(1);
+  }
+  return '';
+}
+
+// X's handle grammar: 1-15 characters, alphanumerics and underscore. Declared
+// here rather than in SELECTORS because it is a pattern for deciding what a
+// scraped href means, not a selector -- the split is selectors in core.js, DOM
+// judgement in dom.js. Hoisted to keep it off the shared content-script global
+// as a bare literal per call, and out of a name another script could collide
+// with mid-file.
+var HANDLE_PATH = /^\/[A-Za-z0-9_]{1,15}$/;
 
 // Everything matching `selector` under root that root itself owns, in document
 // order. A quoted post's media is left out so it stays attributable to the

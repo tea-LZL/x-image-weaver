@@ -59,9 +59,85 @@ test('attributes quoted media to the inner root only', () => {
   assert.deepEqual(collectPhotoIds(inner), ['inner1', 'inner2']);
 });
 
-test('reads tweetId and handle from the permalink and display name', () => {
+test('reads tweetId from the permalink and the handle from the profile link', () => {
   const doc = tweetFixture({ photos: ['aaa', 'bbb'], tweetId: '98765', handle: 'ada' });
   assert.deepEqual(tweetMeta(first(doc)), { tweetId: '98765', handle: 'ada' });
+});
+
+// The author cell is one element holding the display name and the @handle
+// concatenated, so its textContent is "Ada Lovelace@ada" -- which does not begin
+// with an @, and which stripping a leading @ leaves entirely intact. Neither
+// half of that string is the handle; only the profile anchor's href is.
+test('reads the handle from the profile link, not the concatenated author cell text', () => {
+  const doc = tweetFixture({ photos: ['aaa', 'bbb'], tweetId: '98765', handle: 'ada' });
+  const cell = doc.querySelector('[data-testid="User-Name"]');
+  assert.equal(cell.textContent, 'Ada Lovelace@ada', 'the cell really does concatenate both');
+  assert.equal(tweetMeta(first(doc)).handle, 'ada');
+});
+
+// The status permalink lives in the same cell and is also a relative anchor, so
+// the first one found, or the last path segment of any one of them, is wrong:
+// "status/123" or "123" rather than "ada". Only the bare-profile-path filter
+// separates them, so this is the test that makes that filter load-bearing.
+test('picks the handle and not the permalink when both sit in the author cell', () => {
+  const doc = tweetFixture({ photos: ['aaa', 'bbb'], tweetId: '123', handle: 'ada' });
+  const cell = doc.querySelector('[data-testid="User-Name"]');
+  assert.deepEqual(
+    [...cell.querySelectorAll('a')].map((a) => a.getAttribute('href')),
+    ['/ada/status/123', '/ada'],
+    'the permalink is the first relative anchor in the cell',
+  );
+  assert.deepEqual(tweetMeta(first(doc)), { tweetId: '123', handle: 'ada' });
+});
+
+// An author cell that never rendered a profile link -- a locked account, a feed
+// card, a cell that has not hydrated. The tweet id is read from a different part
+// of the post and survives; only the handle goes empty, and nothing throws.
+test('degrades to an empty handle when the author cell has no profile link', () => {
+  const doc = tweetFixture({ photos: ['aaa', 'bbb'], handle: 'ada' });
+  const cell = doc.querySelector('[data-testid="User-Name"]');
+  for (const anchor of cell.querySelectorAll('a')) anchor.remove();
+
+  assert.equal(tweetMeta(first(doc)).handle, '');
+  assert.equal(tweetMeta(first(doc)).tweetId, '123', 'the permalink is an independent source');
+});
+
+// /i/user/<id> is a route, not a profile path, and it is the shape most likely to
+// be mistaken for one: it starts with / and it sits exactly where a handle does.
+// A single-segment requirement is what rejects it.
+test('rejects a non-profile route sitting where the handle would be', () => {
+  const doc = tweetFixture({ photos: ['aaa', 'bbb'], handle: 'ada' });
+  const cell = doc.querySelector('[data-testid="User-Name"]');
+  for (const anchor of cell.querySelectorAll('a')) anchor.remove();
+  const route = doc.createElement('a');
+  route.setAttribute('href', '/i/user/123456');
+  cell.appendChild(route);
+
+  assert.equal(tweetMeta(first(doc)).handle, '');
+});
+
+// A quoted post's author cell and status permalink belong to the quoted post,
+// and root.querySelector() searches the whole subtree including the quote. Both
+// lookups are scoped to the root's own elements, so an outer post that rendered
+// neither degrades to empty rather than taking the quoted post's author and id --
+// which would name the file after a different tweet than the one whose images
+// were merged.
+test("reads the outer post's own handle and id, never a quoted post's", () => {
+  const doc = tweetFixture({
+    photos: ['aaa', 'bbb'],
+    tweetId: '111',
+    handle: 'outer',
+    quote: { tweetId: '222', handle: 'inner', photos: ['i1', 'i2'] },
+  });
+  const outer = doc.querySelector('article[data-testid="tweet"]');
+  const inner = doc.querySelector('div[data-testid="quoteTweet"] article[data-testid="tweet"]');
+
+  assert.deepEqual(tweetMeta(outer), { tweetId: '111', handle: 'outer' });
+  assert.deepEqual(tweetMeta(inner), { tweetId: '222', handle: 'inner' });
+
+  outer.querySelector('[data-testid="User-Name"]').remove();
+  for (const link of outer.querySelectorAll(':scope > a[href*="/status/"]')) link.remove();
+  assert.deepEqual(tweetMeta(outer), { tweetId: '', handle: '' });
 });
 
 // X sets the background-image on a wrapper inside the photo container as often
@@ -93,10 +169,11 @@ test('prefers currentSrc over src', () => {
 
 // A missing permalink or display name must not cost the user their download.
 // tweetMeta reports the empty string and downloadFilename, its only consumer,
-// is what turns that into 'unknown' -- one place that decides, not two.
+// is what turns that into 'unknown' -- one place that decides, not two. Every
+// status link goes, not just the first: a post has more than one.
 test('tweetMeta degrades to empty strings when the permalink and name are absent', () => {
   const doc = tweetFixture({ photos: ['aaa', 'bbb'] });
-  doc.querySelector('a[href*="/status/"]').remove();
+  for (const link of doc.querySelectorAll('a[href*="/status/"]')) link.remove();
   doc.querySelector('[data-testid="User-Name"]').remove();
   const meta = tweetMeta(first(doc));
   assert.deepEqual(meta, { tweetId: '', handle: '' });

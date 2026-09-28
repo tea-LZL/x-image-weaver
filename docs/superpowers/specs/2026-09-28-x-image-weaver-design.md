@@ -103,6 +103,15 @@ without notice. All of that risk is confined to `dom.js` and `button.js`.
 | Quoted tweet wrapper | `div[data-testid="quoteTweet"]` |
 | Photo container | `div[data-testid="tweetPhoto"]` |
 | Video / GIF container | `div[data-testid="videoPlayer"]` |
+| Author cell | `[data-testid="User-Name"]` |
+| Profile link (handle source) | `[data-testid="User-Name"] a[href^="/"]` with a bare-handle href |
+| Tweet permalink (tweet id source) | `a[href*="/status/"]` |
+
+Two of these are load-bearing and easy to get wrong. The handle comes from the **profile
+anchor's href**, never from `[data-testid="User-Name"]`'s `textContent`: X renders display name
+and `@handle` concatenated in that one element, so `textContent` yields `AdaLovelace@ada`.
+The href must additionally be a bare profile path (`^\/[A-Za-z0-9_]{1,15}$` — X's handle
+grammar) so the `/status/` permalink and `/i/user/` routes are not mistaken for it.
 
 ### `collectPhotoIds(root) → string[] | null`
 

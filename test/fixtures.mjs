@@ -11,6 +11,12 @@ const UNPARSEABLE_SRC = 'https://example.com/media/bad?format=jpg&name=orig';
 
 const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
 
+// The display name is derived from the handle and never equals it, and it has a
+// space in it, because that is the trap: X renders the display name and the
+// @handle concatenated in one element, so the cell's textContent cannot separate
+// them. `ada` gives the real page's "Ada Lovelace@ada".
+const displayNameFor = (handle) => `${handle.charAt(0).toUpperCase()}${handle.slice(1)} Lovelace`;
+
 // Builds a document holding one tweet, shaped like the part of X's DOM that
 // collectPhotoIds and tweetMeta read.
 //
@@ -33,12 +39,10 @@ export function tweetFixture({ photos = [], videos = 0, quote = null, tweetId = 
 
   const permalink = document.createElement('a');
   permalink.setAttribute('href', `https://x.com/${handle}/status/${tweetId}`);
+  permalink.textContent = '2h';
   article.appendChild(permalink);
 
-  const userName = document.createElement('div');
-  userName.setAttribute('data-testid', 'User-Name');
-  userName.textContent = `@${handle}`;
-  article.appendChild(userName);
+  article.appendChild(authorCell(document, handle, tweetId));
 
   const media = document.createElement('div');
   for (const id of photos) media.appendChild(photoElement(document, id));
@@ -62,6 +66,35 @@ export function tweetFixture({ photos = [], videos = 0, quote = null, tweetId = 
 
   document.body.appendChild(article);
   return document;
+}
+
+// [data-testid="User-Name"] as X renders it: a status permalink, a display name
+// span and the @handle, all in one element. The handle is only recoverable from
+// the profile anchor's href -- the cell's textContent is "Ada Lovelace@ada" and
+// does not begin with an @, so stripping a leading one yields the whole string.
+function authorCell(document, handle, tweetId) {
+  const cell = document.createElement('div');
+  cell.setAttribute('data-testid', 'User-Name');
+
+  // First on purpose. This is also an a[href^="/"], it is inside the same cell,
+  // and it is the one thing a "first relative anchor in the cell" read would
+  // wrongly pick up. The bare-path filter is what rejects it.
+  const permalink = document.createElement('a');
+  permalink.setAttribute('href', `/${handle}/status/${tweetId}`);
+  cell.appendChild(permalink);
+
+  const displayName = document.createElement('span');
+  displayName.textContent = displayNameFor(handle);
+  cell.appendChild(displayName);
+
+  const handleSpan = document.createElement('span');
+  const profile = document.createElement('a');
+  profile.setAttribute('href', `/${handle}`);
+  profile.textContent = `@${handle}`;
+  handleSpan.appendChild(profile);
+  cell.appendChild(handleSpan);
+
+  return cell;
 }
 
 function photoElement(document, id) {
