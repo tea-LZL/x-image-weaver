@@ -89,7 +89,10 @@ no file imports another.
 - `button.js` → `XIW.button.mount(root)`
 - `main.js` → bootstraps the observer; no exports
 
-The load-bearing seam: `stitch.js` never touches the DOM and `dom.js` never fetches. Both
+The load-bearing seam: `stitch.js` never reads or mutates the page's DOM and `dom.js` never
+fetches. (One qualifier, for the next reader: `stitch.js` does call
+`document.createElement('canvas')`, because there is no other way to obtain a Canvas 2D
+context. That is allocation, not page access — it never queries or alters X's own tree.) Both
 halves are independently testable; only the wiring between them is not.
 
 ## DOM contract
@@ -171,7 +174,7 @@ Defined once in `core.js` as `XIW.TUNABLES`:
 
 ## Stitch pipeline
 
-`XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`. No DOM access.
+`XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`. No page-DOM access.
 
 1. Build `https://pbs.twimg.com/media/<id>?name=orig` for each ID — full resolution,
    original format.
