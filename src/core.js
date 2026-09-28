@@ -16,22 +16,19 @@ XIW.SELECTORS = {
   videoPlayer: 'div[data-testid="videoPlayer"]'
 };
 
-// Split an absolute http(s) URL into scheme, authority, and path. `URL` is a host
-// global that the test harness's vm context does not provide, so parsing is done
-// on the string to keep this helper a pure function of its argument.
-var ABSOLUTE_URL = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(?:[?#].*)?$/;
-var PBS_AUTHORITY = /^pbs\.twimg\.com(?::\d{1,5})?$/i;
-// Anchored on the end of the path: X's media URLs carry no trailing slash, the
-// query string starts immediately after the id.
-var PBS_MEDIA_PATH = /^\/media\/([A-Za-z0-9_-]+)$/;
-
+// The host check is load-bearing, not the path match: a bare `/media/<id>` search
+// would happily return an id from any origin. X's media URLs carry no trailing
+// slash after the id — the query string starts immediately — so anchoring on the
+// end of the pathname is what makes this correct.
 XIW.mediaIdFromUrl = function mediaIdFromUrl(raw) {
-  if (typeof raw !== 'string') return null;
-  var parts = ABSOLUTE_URL.exec(raw);
-  if (!parts) return null;
-  if (parts[1].toLowerCase() !== 'http' && parts[1].toLowerCase() !== 'https') return null;
-  if (!PBS_AUTHORITY.test(parts[2])) return null;
-  var media = PBS_MEDIA_PATH.exec(parts[3]);
+  var url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.hostname !== 'pbs.twimg.com') return null;
+  var media = /^\/media\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
   return media ? media[1] : null;
 };
 

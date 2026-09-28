@@ -30,3 +30,16 @@ test('rejects empty and malformed input', () => {
   assert.equal(mediaIdFromUrl(''), null);
   assert.equal(mediaIdFromUrl('not a url'), null);
 });
+
+// `new URL` only reports the host and path, so a scheme outside http(s) is not
+// rejected here. Unreachable: every URL comes from an img src or a background-image
+// on a page already served over https. Pinned so the leniency stays a decision.
+test('accepts a non-http scheme once the host and path match', () => {
+  assert.equal(mediaIdFromUrl('ftp://pbs.twimg.com/media/abc123XYZ_-9'), 'abc123XYZ_-9');
+});
+
+// Userinfo is not part of a URL's hostname, so `user@pbs.twimg.com` really is the
+// pbs host. Same unreachable-by-origin argument as the scheme test above.
+test('accepts a URL carrying userinfo, since hostname excludes it', () => {
+  assert.equal(mediaIdFromUrl('https://user:pw@pbs.twimg.com/media/abc123XYZ_-9'), 'abc123XYZ_-9');
+});

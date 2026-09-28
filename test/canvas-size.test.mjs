@@ -2,13 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCore } from './harness.mjs';
 
-const { computeCanvasSize: computeInSandbox, TUNABLES } = loadCore();
-
-// The harness evaluates core.js in a vm context, so its returned object carries
-// that realm's Object.prototype and `assert.deepEqual` (strict mode) rejects it
-// against a same-realm literal. Round-tripping through structuredClone normalizes
-// the realm; every assertion below then compares the real values.
-const computeCanvasSize = (tiles) => structuredClone(computeInSandbox(tiles));
+const { computeCanvasSize, TUNABLES } = loadCore();
 
 test('stacks equal tiles at scale 1', () => {
   const tiles = Array(4).fill({ width: 1920, height: 1080 });
