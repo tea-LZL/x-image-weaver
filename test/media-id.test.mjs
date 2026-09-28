@@ -43,3 +43,11 @@ test('accepts a non-http scheme once the host and path match', () => {
 test('accepts a URL carrying userinfo, since hostname excludes it', () => {
   assert.equal(mediaIdFromUrl('https://user:pw@pbs.twimg.com/media/abc123XYZ_-9'), 'abc123XYZ_-9');
 });
+
+// The complement of the test above, and the one that makes the host check
+// load-bearing. Userinfo can carry any host at all, so if hostname were read as
+// everything before the path this would return an id scraped from a page X does
+// not control, and stitch.js would fetch it.
+test('rejects a media-shaped path on a host hidden behind userinfo', () => {
+  assert.equal(mediaIdFromUrl('https://user:secret@evil.com/media/abc123XYZ_-9'), null);
+});

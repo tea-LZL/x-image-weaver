@@ -1,0 +1,13 @@
+{
+  "name": "x-image-weaver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that stitches split-image posts on X into a single tall image.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.1"
+  }
+}

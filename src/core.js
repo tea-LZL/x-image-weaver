@@ -45,7 +45,11 @@ XIW.computeCanvasSize = function computeCanvasSize(tiles) {
   }
 
   // Scale is settled before any pixel dimension is derived, then each dimension
-  // is rounded once from the unscaled extent.
+  // is rounded once from the unscaled extent. That holds for the area re-scale
+  // too: it recomputes from castWidth/castHeight, never from the pixels already
+  // rounded above, and the two differ by one pixel when the recomputed value
+  // lands on a .5 tie. Task 4 draws at these dimensions, so it has to scale the
+  // same extents rather than the rounded ones.
   var scale = 1;
   if (castHeight > XIW.TUNABLES.MAX_CANVAS_HEIGHT) {
     scale = XIW.TUNABLES.MAX_CANVAS_HEIGHT / castHeight;
@@ -61,7 +65,11 @@ XIW.computeCanvasSize = function computeCanvasSize(tiles) {
     height = Math.round(castHeight * scale);
   }
 
-  return { width: width, height: height, scale: scale };
+  // A tile narrower than a couple of pixels rounds to 0 once the height cap has
+  // scaled it, and Chrome rejects a 0-width canvas outright, so the caller would
+  // fail the whole stitch rather than produce a small one. One pixel is far
+  // below anything a real image can be, so the floor costs nothing.
+  return { width: Math.max(1, width), height: Math.max(1, height), scale: scale };
 };
 
 XIW.downloadFilename = function downloadFilename(meta, format) {

@@ -7,8 +7,11 @@ function readRepoFile(relativePath) {
 
 // The script list the manifest declares, in the order Chrome would inject them.
 // Read from the manifest so a test can never drift from what the extension ships.
+// Flattened across every content_scripts entry rather than the first one: a
+// second block is a real thing an extension can have, and a loader that ignores
+// it would silently stop covering half the manifest.
 export function manifestScripts() {
-  return JSON.parse(readRepoFile('manifest.json')).content_scripts[0].js;
+  return JSON.parse(readRepoFile('manifest.json')).content_scripts.flatMap((block) => block.js);
 }
 
 // Chrome evaluates every content script of an extension into one isolated world,
@@ -54,6 +57,13 @@ function mergeGlobals(globals) {
 
 export function loadCore(globals) {
   return evaluateScripts(['src/core.js'], globals);
+}
+
+// core.js and dom.js share one context on purpose. In production they are two
+// classic content scripts landing in one isolated world, and dom.js reads
+// XIW.SELECTORS and XIW.mediaIdFromUrl off the namespace core.js published.
+export function loadDom(globals) {
+  return evaluateScripts(['src/core.js', 'src/dom.js'], globals);
 }
 
 export function loadAll(globals) {
