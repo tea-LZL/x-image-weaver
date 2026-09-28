@@ -509,12 +509,11 @@ First line is the `var XIW` namespace line. Then:
   from between the `url(` and the closing `)`. Preserve order and duplicates; do not use a Set.
 - `tweetMeta(root)`: apply the same own-elements filter to both lookups, so a quoted post's
   handle and tweetId cannot leak into the outer post. `root.querySelector` searches the whole
-  subtree and will otherwise return the quoted post's values.
-- `tweetMeta(root)`: read the tweet ID from the first `a[href*="/status/"]` match via
-  `/\/status\/(\d+)/`. Read the handle from the **profile anchor's href** inside
-  `[data-testid="User-Name"]`, not from that element's `textContent` — X renders the cell as
-  display name and `@handle` concatenated in one element, so textContent yields
-  `AdaLovelace@ada`. Match `a[href^="/"]` whose href is a bare profile path
+  subtree and will otherwise return the quoted post's values. Then read the tweet ID from the
+  first `a[href*="/status/"]` match via `/\/status\/(\d+)/`. Read the handle from the **profile
+  anchor's href** inside `[data-testid="User-Name"]`, not from that element's `textContent` —
+  X renders the cell as display name and `@handle` concatenated in one element, so textContent
+  yields `AdaLovelace@ada`. Match `a[href^="/"]` whose href is a bare profile path
   (`^\/[A-Za-z0-9_]{1,15}$`, X's handle grammar) so the `/status/` permalink and
   `/i/user/` routes are excluded, and take the last path segment. Return
   `{ tweetId, handle }` with empty strings for whatever cannot be found — the filename

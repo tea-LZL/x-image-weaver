@@ -26,16 +26,12 @@ test('returns null for a post with no media', () => {
   assert.equal(collectPhotoIds(first(doc)), null);
 });
 
+// The rule: a video mixed into a gallery is not a split gallery, so the whole
+// post is refused rather than merged with the video dropped. Two photos clear
+// the two-photo gate, which is what makes this the *only* test that can pin the
+// video rule -- with zero photos the gate returns null first, the video is never
+// counted, and the test still passed after the video rule was deleted outright.
 test('returns null when a video is mixed in with photos', () => {
-  const doc = tweetFixture({ photos: ['aaa', 'bbb'], videos: 1 });
-  assert.equal(collectPhotoIds(first(doc)), null);
-});
-
-// Two photos clear the two-photo gate, so a null here can only have come from the
-// video rule. That is the whole point of giving a "video" test real photos: with
-// zero photos the gate returns null first, the video is never counted, and the
-// test still passed after the video rule was deleted outright.
-test('returns null for a video alongside a mergeable photo count', () => {
   const doc = tweetFixture({ photos: ['aaa', 'bbb'], videos: 1 });
   assert.equal(collectPhotoIds(first(doc)), null);
 });
