@@ -11,7 +11,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 // one becomes a property of it, so an unwrapped helper here is a name any later
 // script could clobber. The whole XIW namespace exists to keep this extension's
 // internals out of X's way and out of each other's; leaking six names back out
-// undoes it. Only the two exports below reach the namespace.
+// undoes it. Only the three exports below reach the namespace.
 //
 // Selectors are read per call, never resolved once at load: media is
 // re-collected at click time because React can swap a node's media after a
