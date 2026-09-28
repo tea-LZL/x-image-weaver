@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { loadCore, loadAll, manifestScripts } from './harness.mjs';
 
 test('core.js publishes a shared namespace', () => {
@@ -42,4 +44,43 @@ test('content scripts are declared in dependency order', () => {
     'src/overlay.js',
     'src/main.js',
   ]);
+});
+
+// The IIFE wrap has no automated detector anywhere else, and it is not a style
+// rule: a top-level `var` or `function` in a classic content script becomes a
+// property of the shared isolated-world global, so a same-named helper in a
+// later file silently overwrites the earlier one with no error anywhere. This
+// is the check that would have caught core.js and dom.js before they were
+// wrapped by hand, and it covers all six scripts instead of just those two.
+//
+// Each script is evaluated alone into a fresh context, so "what did this file
+// add" is measured rather than inferred. Nothing is shared with the tests above:
+// those evaluate all six in order into this realm, where the harness's own
+// `globalThis.XIW = {}` means `var XIW` binds to a property that already exists
+// and adds nothing to diff.
+//
+// Only the loading of the file is checked, not its behavior -- `var XIW` reads
+// the namespace off globalThis or creates it, and every other declaration in
+// these files sits inside an IIFE that a later script cannot reach into.
+test('no content script leaks anything but the XIW namespace to globalThis', () => {
+  for (const path of manifestScripts()) {
+    // A real context, not a plain object literal evaluated in this realm, so a
+    // script's own `var` really does land on its global object and the diff
+    // below sees it. An empty context: an unwrapped helper is visible whether or
+    // not the scripts before it have run, and one script at a time means the
+    // failure names the file that leaked.
+    const context = vm.createContext({});
+    const before = new Set(Object.getOwnPropertyNames(context));
+
+    vm.runInContext(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'), context, { filename: path });
+
+    const added = Object.getOwnPropertyNames(context).filter((name) => !before.has(name));
+    // Sorted and compared as a set-valued list: the assertion is about which
+    // names escaped, not about the order a script happened to declare them in.
+    assert.deepEqual(
+      added.sort(),
+      ['XIW'],
+      `${path} must declare nothing at the top level but the XIW namespace, found: ${added.join(', ') || 'nothing'}`
+    );
+  }
 });
