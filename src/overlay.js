@@ -14,6 +14,18 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 //   body overflow taken in open(),       restored in hide()
 //   focus        taken in open(),        returned in hide()
 //
+// The keydown listener does two jobs, not one: it closes on Escape, and it holds
+// the Tab cycle that makes the dialog's aria-modal="true" true rather than
+// aspirational. See cycleFocus().
+//
+// The image is capped at 92vh/92vw as an upper bound, and the two control bands
+// are reserved out of that budget rather than laid over it: --xiw-band-top and
+// --xiw-band-bottom are subtracted from the cap, so the Download button and the
+// close control cannot cover the composite they exist to serve. The first draft
+// of this file got that wrong in both directions at once -- a control bar in flow
+// clipped the image, and moving it out of flow put it on top of the last rows --
+// and the arithmetic that now holds is in the stylesheet next to the numbers.
+//
 // Two of those are deliberately asymmetric. showError takes the overlay open and
 // releases nothing: a second merge can fail while the first composite is still on
 // screen, and revoking that URL would blank an image the user is still looking at
@@ -47,7 +59,15 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // Owner stylesheet. Flushed left on purpose -- it is a string, not code, and
   // indenting it under the IIFE only makes every selector harder to read.
   var STYLE = `
-:host { all: initial; }
+:host {
+  /* The two control bands, declared once and spent twice: as the backdrop's
+     padding, which is what reserves them, and as the subtraction below, which is
+     what keeps the image out of them. Two numbers that had to agree by hand
+     would be a silent regression the day one of them moved. */
+  --xiw-band-top: 56px;
+  --xiw-band-bottom: 72px;
+  all: initial;
+}
 
 * { box-sizing: border-box; }
 
@@ -58,6 +78,12 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* Reserving the control bands here, not by nudging the controls: the controls
+     are out of flow, so nothing but this padding stands between them and the
+     image. Abspos children resolve against the padding box, so .close and
+     .toolbar keep their 12px and 24px offsets from the viewport edge and land
+     inside the bands rather than on top of the composite. */
+  padding: var(--xiw-band-top) 0 var(--xiw-band-bottom);
   background: rgba(0, 0, 0, 0.92);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -77,21 +103,31 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   overflow: hidden;
 }
 
+/* The cap is the smaller of the two limits the spec allows, arrived at without a
+   percentage. 92vh alone is a ceiling the layout does not reach: it never shrinks
+   to fit, so with the stage at 100vh - 128px a 92vh image still runs under the
+   controls. min(92vh, 100%) would fit, but 100% resolves against whether a flex
+   item's used height counts as definite for its children, which is engine
+   behaviour rather than arithmetic. Subtracting the bands is the same value as
+   that minimum -- 100vh - bands is always the larger of the two -- and it holds
+   by construction: the image is centred in a box exactly 92vh - 128px shorter
+   than the one 92vh would have needed, so its top and bottom edges sit 4vh inside
+   the stage, which is inside the bands. The cap reaches zero at a 139px-tall
+   viewport, below which the stage has no height left either and there is nothing
+   to show; no browser window gets that short, so it is left as arithmetic rather
+   than a max(0px, ...) wrapper. */
 .image {
   display: block;
-  max-height: 92vh;
+  max-height: calc(92vh - var(--xiw-band-top) - var(--xiw-band-bottom));
   max-width: 92vw;
   object-fit: contain;
 }
 
-/* Floated rather than in the flex flow, and that is load-bearing twice over. In
-   flow it would take ~80px, the stage would be 100vh - 80px tall, and an image
-   at 92vh would be clipped at the bottom -- the last rows of the composite, the
-   rows the whole product exists to produce. Out of flow the stage gets the full
-   height and the 8vh the image does not use is the margin. The stage is also left
-   shrink-to-fit rather than full width, so the space beside a tall narrow
-   composite really is backdrop, and clicking it really is the close-by-click the
-   spec asks for. */
+/* Out of the flex flow, which is what lets the stage have a height to reserve
+   the bands from. Kept shrink-to-fit rather than full width, so the space beside
+   a tall narrow composite really is backdrop, and clicking it really is the
+   close-by-click the spec asks for. Vertically it lives in the bottom band: 24px
+   up, ~39px tall, so it ends at 63px, and the band is 72px. */
 .toolbar {
   position: absolute;
   bottom: 24px;
@@ -127,6 +163,11 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 
 .control--primary:hover { background: #e2e2e6; }
 
+/* In the top band: 12px down, 40px tall, so it ends at 52px and the band is 56px.
+   Horizontally it needs nothing -- above a 1300px viewport the image is 4vw from
+   the right edge and the control is inside that margin entirely, and below that
+   its box does overlap the image's horizontal span but the top band already keeps
+   it above the image's first row. */
 .close {
   position: absolute;
   top: 12px;
@@ -281,6 +322,10 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     refs.code.textContent = errorCode(err);
     refs.message.textContent = errorMessage(err);
     refs.panel.hidden = false;
+    // Same rule as Dismiss below, and for the same reason: a Retry with nothing
+    // behind it is the silent no-op the spec calls out as reading as a broken
+    // extension. A caller that has no work to re-run does not get the button.
+    refs.retry.hidden = !onRetry;
     // Only offered when dismissing reveals something. With no composite
     // underneath there is no prior state to go back to and the button would be a
     // lie.
@@ -360,7 +405,11 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   }
 
   function onKeyDown(event) {
-    if (event.key === 'Escape') hide();
+    if (event.key === 'Escape') {
+      hide();
+      return;
+    }
+    if (event.key === 'Tab') cycleFocus(event);
   }
 
   // The one object URL, revoked here and nowhere else. Both the replacement in
@@ -393,11 +442,69 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // behind it, and lands on whichever control this transition actually put on
   // screen. Shadow-tree focus is invisible to anything outside: the document's
   // activeElement is the host, and the button is the shadow root's.
+  //
+  // This is half of the tab boundary and not all of it -- see cycleFocus() for
+  // the other half, without which one Tab keypress from here escapes the overlay.
   function focusFirst() {
     if (!refs) return;
-    if (!refs.panel.hidden) refs.retry.focus();
-    else if (!refs.download.hidden) refs.download.focus();
+    if (!refs.panel.hidden) {
+      if (!refs.retry.hidden) refs.retry.focus();
+      else if (!refs.dismiss.hidden) refs.dismiss.focus();
+      else refs.close.focus();
+      return;
+    }
+    if (!refs.download.hidden) refs.download.focus();
     else refs.close.focus();
+  }
+
+  // The controls Tab may visit, in the order the user reads the screen: the
+  // action that just failed, then the way out of the error, then the primary
+  // action, then close. Not DOM order, which would put the panel's controls last
+  // because the panel is the last child of the backdrop, and a Retry button two
+  // Tab presses away is a Retry button most people never reach.
+  function tabOrder() {
+    var order = [];
+    if (!refs.panel.hidden) {
+      if (!refs.retry.hidden) order.push(refs.retry);
+      if (!refs.dismiss.hidden) order.push(refs.dismiss);
+    }
+    if (!refs.download.hidden) order.push(refs.download);
+    // Never absent: the overlay is up, so there is always something to land on.
+    order.push(refs.close);
+    return order;
+  }
+
+  // Tab and Shift+Tab cycle the overlay's own controls, which is what
+  // aria-modal="true" on the backdrop asserts: that nothing outside is reachable
+  // while this is up. Focus alone does not deliver that. Focusing one control
+  // creates no boundary, the host is the last thing in the document, and Tab from
+  // the last control runs off the end of the document and wraps into X's
+  // timeline -- still visible, still announced as unreachable, and still
+  // focusable, under an overlay that has not gone anywhere.
+  //
+  // Only the two wraps are handled. A Tab in the middle of the cycle is left to
+  // the browser, which is what keeps Shift+Tab, the platform's own ordering, and
+  // any future control in the right place without this function knowing about it.
+  function cycleFocus(event) {
+    var order = tabOrder();
+    var index = order.indexOf(host.shadowRoot.activeElement);
+
+    // Focus is on the host itself, or somewhere in X's tree entirely: not ours,
+    // and not where a Tab from here should go. Pull it in at the end the
+    // direction is heading rather than letting it continue into the page.
+    if (index === -1) {
+      event.preventDefault();
+      (event.shiftKey ? order[order.length - 1] : order[0]).focus();
+      return;
+    }
+
+    var next = event.shiftKey ? index - 1 : index + 1;
+    if (next === -1 || next === order.length) {
+      // preventDefault first: without it the browser would also run its own focus
+      // move, from the control we are about to leave, and land somewhere in X.
+      event.preventDefault();
+      (event.shiftKey ? order[order.length - 1] : order[0]).focus();
+    }
   }
 
   function errorCode(err) {
@@ -482,6 +589,8 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     view.retry = element('button', 'control control--primary retry');
     view.retry.type = 'button';
     view.retry.textContent = 'Retry';
+    // Hidden until showError() has a callback to put behind it.
+    view.retry.hidden = true;
 
     view.dismiss = element('button', 'control dismiss');
     view.dismiss.type = 'button';
@@ -506,6 +615,11 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 
     view.backdrop = element('div', 'backdrop');
     view.backdrop.setAttribute('role', 'dialog');
+    // True, and not aspirational: the backdrop covers the viewport, body scroll
+    // is locked, and cycleFocus() keeps Tab inside this shadow tree, so nothing
+    // outside the dialog is reachable by keyboard. Dropping the attribute instead
+    // would have been the cheaper fix and would have been a lie about the
+    // controls this dialog does cover.
     view.backdrop.setAttribute('aria-modal', 'true');
     view.backdrop.setAttribute('aria-label', 'Merged image');
     view.backdrop.appendChild(stage);
