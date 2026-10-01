@@ -89,7 +89,10 @@ no file imports another.
 - `button.js` → `XIW.button.mount(root)`
 - `main.js` → bootstraps the observer; no exports
 
-The load-bearing seam: `stitch.js` never touches the DOM and `dom.js` never fetches. Both
+The load-bearing seam: `stitch.js` never reads or mutates the page's DOM and `dom.js` never
+fetches. (One qualifier, for the next reader: `stitch.js` does call
+`document.createElement('canvas')`, because there is no other way to obtain a Canvas 2D
+context. That is allocation, not page access — it never queries or alters X's own tree.) Both
 halves are independently testable; only the wiring between them is not.
 
 ## DOM contract
@@ -103,6 +106,15 @@ without notice. All of that risk is confined to `dom.js` and `button.js`.
 | Quoted tweet wrapper | `div[data-testid="quoteTweet"]` |
 | Photo container | `div[data-testid="tweetPhoto"]` |
 | Video / GIF container | `div[data-testid="videoPlayer"]` |
+| Author cell | `[data-testid="User-Name"]` |
+| Profile link (handle source) | `[data-testid="User-Name"] a[href^="/"]` with a bare-handle href |
+| Tweet permalink (tweet id source) | `a[href*="/status/"]` |
+
+Two of these are load-bearing and easy to get wrong. The handle comes from the **profile
+anchor's href**, never from `[data-testid="User-Name"]`'s `textContent`: X renders display name
+and `@handle` concatenated in that one element, so `textContent` yields `AdaLovelace@ada`.
+The href must additionally be a bare profile path (`^\/[A-Za-z0-9_]{1,15}$` — X's handle
+grammar) so the `/status/` permalink and `/i/user/` routes are not mistaken for it.
 
 ### `collectPhotoIds(root) → string[] | null`
 
@@ -162,7 +174,7 @@ Defined once in `core.js` as `XIW.TUNABLES`:
 
 ## Stitch pipeline
 
-`XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`. No DOM access.
+`XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`. No page-DOM access.
 
 1. Build `https://pbs.twimg.com/media/<id>?name=orig` for each ID — full resolution,
    original format.
@@ -204,10 +216,22 @@ The overlay is a lazily-created singleton: one host element with `attachShadow({
 **Shadow DOM is required, not stylistic.** X's global stylesheet mangles injected `img` and
 `div` elements; without the shadow boundary the composite renders wrong.
 
-- Backdrop `rgba(0, 0, 0, 0.92)`, image `object-fit: contain` at 92vh / 92vw.
+- Backdrop `rgba(0, 0, 0, 0.92)`. The image is `object-fit: contain` at **at most** 92vh /
+  92vw — that is an upper bound, not a fixed size, and the layout must reduce it as needed.
+  **The composite must never be covered by the overlay's own controls.** The toolbar sits
+  bottom-center and the close control top-right, both over the image band; if they are taken
+  out of flow to keep the stage full-height, they overlay the very rows a downscaled tall
+  stitch exists to show. Reserve their bands in the layout instead — the stage's available
+  height accounts for them, and the image caps at the smaller of 92vh and that available
+  height.
 - Close via the `✕` control, `Escape`, or a backdrop click. Body scroll is locked while open
   and restored on close.
-- One action: **Download PNG**, via a synthetic `<a download>` click on the object URL. This
+- The overlay **is** modal: it covers the viewport and locks scroll. So it says
+  `role="dialog"` with `aria-modal="true"`, and that claim is backed by an actual Tab cycle
+  across the shadow tree's controls. Announcing a modality the code does not implement lets a
+  keyboard user tab out into content the overlay covers.
+- One action: **Download** (deliberately not labelled "Download PNG" — the label would lie
+  whenever the JPEG fallback fires), via a synthetic `<a download>` click on the object URL. This
   needs no `chrome.downloads` permission, which is why the manifest can declare none.
 - Filename: `x-image-weaver-<handle>-<tweetId>.png`, both values read from the DOM.
 - Object URLs are revoked when replaced and when the overlay closes.
@@ -260,8 +284,15 @@ and requires no grant prompt; the site-access notice for the listed origins is i
 content scripts.
 
 `minimum_chrome_version` is 103 because `AbortSignal.timeout` — used for the per-image
-fetch deadline — first shipped there. `createImageBitmap` and Shadow DOM are far older and
-constrain nothing.
+fetch deadline — first shipped there (confirmed against MDN's browser-compat data).
+`createImageBitmap` and Shadow DOM are far older and constrain nothing.
+
+One nuance of that floor, which the code deliberately does not depend on: Chrome 103–123
+implemented `AbortSignal.timeout` as a *partial* implementation that always rejects with an
+`AbortError` rather than a `TimeoutError`; full support landed in Chrome 124. The stitch
+pipeline maps every rejection to `StitchError('NETWORK')` without inspecting the error's
+name, so the difference is invisible here — but any future code that branches on
+`err.name === 'TimeoutError'` would behave differently below Chrome 124.
 
 **CORS needs no workaround.** `pbs.twimg.com` reflects the request `Origin` back in
 `access-control-allow-origin` (and sends `*` when no `Origin` is present) — verified against
@@ -294,9 +325,20 @@ to break when X changes its DOM:
 - A photo with an unparseable URL poisons the whole result to `null`.
 - Duplicate media IDs are preserved.
 
-A headless browser is still out of scope; it would be needed to test the MutationObserver,
-React re-rendering, canvas drawing, and the overlay, none of which jsdom models. Those are
-covered by the manual checklist:
+A headless browser is still out of scope; it would be needed to test canvas drawing, the
+MutationObserver, React re-rendering, and real layout, none of which jsdom models. The
+overlay's *behavioral* contract is nonetheless testable under jsdom and must be, because a
+`ReferenceError` in all three of its close paths passed every gate that existed before this
+was written:
+
+- Each of the three close paths (`✕`, `Escape`, backdrop click) actually invokes `hide`.
+- Object URLs are revoked on replace and on close, and **not** revoked by `showError`.
+- `document.body.style.overflow` is saved on open and restored on close, and a second
+  `hide()` cannot double-restore.
+- The Retry control is focusable and visible only when a retry callback exists behind it.
+
+Layout and rendering remain manual-checklist items: jsdom has no layout engine, so it
+cannot tell you whether a control is covering the image.
 
 - Posts with 2, 3, and 4 images — button appears, composite is seamless.
 - Single image — no button.
