@@ -97,7 +97,31 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     var found = root.querySelectorAll(selector);
     for (var i = 0; i < found.length; i++) roots.push(found[i]);
 
-    for (var j = 0; j < roots.length; j++) mountOnce(roots[j]);
+    for (var j = 0; j < roots.length; j++) mountGuarded(roots[j]);
+  }
+
+  // One root's failure must not cost its siblings their button, and containment
+  // belongs here rather than around scan() in the drain: a subtree can hold
+  // several roots (a post, its quote wrapper, the quoted post), so a catch one
+  // level up would still abandon every root after the throwing one in the same
+  // subtree. The drain empties the queue into a snapshot before scanning, so a
+  // root skipped by an exception has no second copy anywhere -- the only thing
+  // that brings it back is a later mutation touching the same subtree, which for
+  // a post already scrolled past may never come.
+  //
+  // mountOnce's own protection is the mark-before-mount ordering, which stops a
+  // throwing root being retried forever. This is the sibling case, which that
+  // ordering does not reach.
+  function mountGuarded(root) {
+    try {
+      mountOnce(root);
+    } catch (err) {
+      // No UI surface exists for "this post could not be decorated", so the
+      // console is the only honest one. Swallowing it would leave a post with no
+      // button and no record of why -- and a silent failure is the failure mode
+      // this whole file is written against.
+      console.error('[x-image-weaver] could not decorate a post', err);
+    }
   }
 
   // Duck-typed, never `instanceof Element`, and for the reason dom.js documents:

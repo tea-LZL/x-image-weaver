@@ -34,11 +34,11 @@ const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
 // mutation tests need: their scenario is a tweet arriving after startup, and a
 // boot-time tweet in the same document would make "exactly one button" ambiguous.
 //
-// pretendToBeVisual: true is what supplies requestAnimationFrame. Without it
-// jsdom leaves the global undefined, main.js's boot guard would decline to start,
-// and every test here would pass vacuously with zero buttons mounted -- which is
-// why the first test asserts a button exists. That assertion is what makes the
-// rest of them mean anything.
+// pretendToBeVisual: true is what supplies requestAnimationFrame, and it is not
+// optional: hostGlobals below binds it, so without it every test in this file
+// throws at boot rather than passing vacuously. Note what would NOT catch it --
+// main.js's boot guard checks MutationObserver, not rAF, so a window missing
+// only rAF would start the extension and then throw inside the first drain.
 //
 // loadAll() evaluates all six manifest scripts into globalThis and main.js starts
 // as the last of them, so that one call is the extension booting.
@@ -249,8 +249,13 @@ test('the same node queued twice in one burst yields one button', async () => {
   const article = tweet(document);
   const host = document.createElement('div');
   host.appendChild(article);
-  // Detach and re-attach inside the same synchronous block, so the observer
-  // records the article as added, removed, added -- all before any frame runs.
+  // What the observer actually records here is `host`, twice, not the article:
+  // the article is never an addedNodes entry, it is found by scanning host's
+  // subtree. So the same node reaches the queue twice and the Set collapses it to
+  // one scan -- but the marker would collapse the second scan anyway, which is
+  // why the note above says this asserts the outcome and not the Set.
+  // Detach and re-attach inside the same synchronous block, so both childList
+  // records land before any frame runs.
   document.body.appendChild(host);
   host.removeChild(article);
   host.appendChild(article);
@@ -258,6 +263,73 @@ test('the same node queued twice in one burst yields one button', async () => {
 
   assert.equal(article.querySelectorAll(BUTTON).length, 1);
   assert.equal(marked(document).length, 1);
+});
+
+// One root throwing must not cost its neighbours their button.
+//
+// The drain empties the queue into a snapshot before scanning, so a node that is
+// skipped by an exception has no second copy anywhere -- the only thing that would
+// bring it back is a later mutation touching the same subtree, which for a post
+// already scrolled past may never come. The throwing root itself is protected by
+// the mark-before-mount ordering; this is the sibling case, which that reasoning
+// does not reach.
+test('a throwing root does not stop the rest of the frame from mounting', async () => {
+  const { document, window, XIW } = empty();
+
+  const bad = tweet(document);
+  const good = tweet(document);
+  const host = document.createElement('div');
+  host.appendChild(bad);
+  host.appendChild(good);
+
+  const real = XIW.button.mount;
+  const errors = [];
+  const realError = console.error;
+  console.error = (...args) => errors.push(args);
+  XIW.button.mount = (root) => {
+    if (root === bad) throw new Error('boom');
+    return real(root);
+  };
+
+  document.body.appendChild(host);
+  await settle(window);
+
+  console.error = realError;
+  XIW.button.mount = real;
+
+  assert.equal(good.querySelectorAll(BUTTON).length, 1, 'the neighbour is still mounted');
+  assert.equal(errors.length, 1, 'and the failure was reported rather than swallowed');
+  assert.match(String(errors[0][0]), /could not decorate/);
+});
+
+// The recovery guarantee the drain's `isConnected` skip depends on.
+//
+// That skip drops any queued node React detached before the frame ran. If a tweet
+// detached in one commit and re-attached in a later one were dropped for good, the
+// skip would trade wasted work for a permanently undecorated post -- a regression
+// that only appears under a route change mid-scroll, which is exactly the kind of
+// thing a manual checklist does not reliably catch.
+//
+// It is safe because re-attachment is itself a childList mutation, so the node is
+// enqueued again. This locks that: mounted, removed, mounted again.
+test('a root that is detached before the frame and re-attached later is still mounted', async () => {
+  const { document, window } = empty();
+
+  const article = tweet(document);
+  document.body.appendChild(article);
+  // Removed in the same synchronous block, so the drain never sees it connected
+  // and skips it.
+  article.remove();
+  await settle(window);
+  assert.equal(article.querySelectorAll(BUTTON).length, 0, 'skipped while detached');
+  assert.equal(article.getAttribute(MARKER), null, 'and not marked, so it is eligible again');
+
+  // A later commit puts it back. The observer reports that as an addition, so the
+  // drain gets a second look at a node that was never marked.
+  document.body.appendChild(article);
+  await settle(window);
+  assert.equal(article.querySelectorAll(BUTTON).length, 1);
+  assert.equal(article.getAttribute(MARKER), '');
 });
 
 // The one test that can tell a correct marker check from a broken one.
@@ -382,7 +454,7 @@ test('a quoted tweet is a root in its own right', async () => {
 // takes when the quoted post renders as a plain div), but all three are roots
 // and all three get the marker.
 test('an article quoting a post: every root is marked, and the outer takes only its own media', async () => {
-  const { document, window } = empty();
+  const { document, window, XIW } = empty();
 
   const outer = tweet(document, { photos: ['aa', 'bb'] });
   const wrapper = document.createElement('div');
@@ -414,14 +486,22 @@ test('an article quoting a post: every root is marked, and the outer takes only 
   assert.equal(outer.querySelector(BUTTON).closest('[data-testid="quoteTweet"]'), null);
   assert.ok(wrapper.querySelector(BUTTON).closest('[data-testid="quoteTweet"]'));
 
-  // The ownership rule, read back off the DOM: the outer's row holds its own two
-  // photos and its button, and the quoted post's four-photo picture never leaks
-  // into it. dom.js's `quote !== root && root.contains(quote)` filter is what
-  // makes that true, and this is where a regression in it would show.
+  // The ownership rule, asserted against the value the rule produces and not
+  // against the DOM it reads. dom.js's `quote !== root && root.contains(quote)`
+  // filter decides which media a root owns; it moves no nodes, so counting
+  // tweetPhoto elements off the DOM cannot detect a regression in it -- the
+  // fixture is what put those elements there, and they stay there either way.
+  // collectPhotoIds is the filter's output, so a broken filter changes this.
+  assert.deepEqual(XIW.collectPhotoIds(outer), ['aa', 'bb'], 'the outer owns only its own media');
+  assert.deepEqual(XIW.collectPhotoIds(wrapper), ['cc', 'dd'], 'the wrapper owns the media it wraps');
+  assert.deepEqual(XIW.collectPhotoIds(quoted), ['cc', 'dd'], 'and the quoted article agrees');
+
+  // Where the two buttons physically landed, which is a separate question from
+  // ownership and is observable in jsdom even though the crop that would hide a
+  // misplaced button needs a layout engine.
   const outerRow = outer.querySelector('[data-testid="tweetPhoto"]').parentElement;
   assert.equal(outerRow.querySelectorAll('[data-testid="tweetPhoto"]').length, 2);
   assert.equal(outerRow.querySelectorAll(BUTTON).length, 1, "the outer button is on the outer's row");
-  assert.equal(outer.querySelectorAll('[data-testid="tweetPhoto"]').length, 4, 'all four, unmarked');
 });
 
 // The same shape arriving after startup, which is the case that actually happens
