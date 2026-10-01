@@ -249,13 +249,15 @@ test('the same node queued twice in one burst yields one button', async () => {
   const article = tweet(document);
   const host = document.createElement('div');
   host.appendChild(article);
-  // What the observer actually records here is `host`, twice, not the article:
-  // the article is never an addedNodes entry, it is found by scanning host's
-  // subtree. So the same node reaches the queue twice and the Set collapses it to
-  // one scan -- but the marker would collapse the second scan anyway, which is
-  // why the note above says this asserts the outcome and not the Set.
-  // Detach and re-attach inside the same synchronous block, so both childList
-  // records land before any frame runs.
+  // What the observer records here, precisely: body gains `host` (one record),
+  // host loses `article` (a second), host gains `article` back (a third). So the
+  // queue holds host and article -- two distinct nodes, not one node twice -- and
+  // the Set's collapse is not what this test exercises. The marker is what makes
+  // the result one button: host is scanned, which reaches the article inside it,
+  // and the later record for the article finds it already marked. That is the
+  // same limitation the note above describes from the other end.
+  // Detach and re-attach inside the same synchronous block, so all three records
+  // land before any frame runs.
   document.body.appendChild(host);
   host.removeChild(article);
   host.appendChild(article);
@@ -291,11 +293,16 @@ test('a throwing root does not stop the rest of the frame from mounting', async 
     return real(root);
   };
 
-  document.body.appendChild(host);
-  await settle(window);
-
-  console.error = realError;
-  XIW.button.mount = real;
+  // try/finally, not a bare restore: if settle() throws, the patched globals would
+  // otherwise leak into every later test in this file and fail them for a reason
+  // that has nothing to do with what they assert.
+  try {
+    document.body.appendChild(host);
+    await settle(window);
+  } finally {
+    console.error = realError;
+    XIW.button.mount = real;
+  }
 
   assert.equal(good.querySelectorAll(BUTTON).length, 1, 'the neighbour is still mounted');
   assert.equal(errors.length, 1, 'and the failure was reported rather than swallowed');
