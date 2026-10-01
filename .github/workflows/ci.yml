@@ -1,0 +1,48 @@
+name: CI
+
+# Runs on ordinary development. The release workflow is separate because it does
+# strictly more (packaging, publishing) and must not run on a branch push.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only. This workflow only reads the repository, so it cannot be used to
+# write to it even if a step were somehow subverted.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # 22 is what the suite was developed and verified against. Pinning the
+          # major keeps the runner off a newer major until it has been checked.
+          node-version: 22
+          cache: npm
+
+      - name: Install the test dependency
+        run: npm ci
+
+      - name: Check the two version declarations agree
+        # manifest.json and src/core.js each carry a version by hand and nothing
+        # else couples them. Checking on every push means drift is caught here
+        # rather than at tag time, when it is about to block a release.
+        run: node scripts/verify-release-version.mjs
+
+      - name: Test
+        run: npm test
+
+      - name: Check the extension packages cleanly
+        # Not an artifact, just a canary: the release workflow runs the same zip
+        # command, and a file that stops existing should fail here first.
+        run: |
+          set -euo pipefail
+          zip -r -X /tmp/package-check.zip manifest.json src icons
+          unzip -l /tmp/package-check.zip

@@ -81,6 +81,51 @@ What is **not**, and cannot be: anything needing a layout engine or a real brows
 drawing, the actual paint order of X's CSS, whether X's real markup matches the fixtures, and
 whether a download actually lands on disk are all in the checklist below.
 
+## Releases
+
+Two workflows. `ci.yml` runs on every push to `master` and on every pull request: it installs
+the dev dependency, checks that the version declarations agree, runs the suite, and runs the
+same `zip` command the release uses as a canary so a file that stops existing fails there
+first. It has no write permission and uploads nothing.
+
+`release.yml` runs on a tag and creates a GitHub Release with the packaged extension
+attached.
+
+### Cutting a release
+
+The version lives in four places and `scripts/verify-release-version.mjs` requires all of
+them to agree. Bump the first three, commit, then push the tag:
+
+1. `manifest.json` → `"version"`
+2. `src/core.js` → `XIW.VERSION`
+3. `package.json` → `"version"`
+4. The git tag — `v0.2.0` or `0.2.0`, both accepted
+
+```bash
+# after bumping the three files and committing
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag is matched broadly (`v[0-9]*`, `[0-9]*`) and then validated inside the job. That is
+deliberate: a narrow tag glob is tidier, but if it is subtly wrong no release ever runs and
+nothing tells you, because a workflow that does not match produces no run to look at. A
+mis-typed tag now fails the run with a message naming all four copies.
+
+The job refuses to package anything if the tests fail, and `gh release create` refuses to
+replace an existing release for the same tag — re-running cannot silently overwrite a
+published artifact.
+
+### What is in the release
+
+`x-image-weaver-v<version>.zip` containing only `manifest.json`, `src/`, and `icons/` — the
+files Chrome loads, and nothing else. Tests, docs, CI config, and the jsdom devDependency are
+excluded, so the archive is small enough to read before loading it into a browser. To install
+from a release, unzip it and point **Load unpacked** at the extracted folder.
+
+There is no `.crx`. Building one requires a private signing key, and shipping that key to CI
+is a worse trade than asking people to unzip a folder.
+
 ## Manual verification checklist
 
 Run this in a real browser against a real logged-in X session. The automated suite covers

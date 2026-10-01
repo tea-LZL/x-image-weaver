@@ -1,0 +1,91 @@
+name: Release
+
+# Deliberately broad, then validated inside the job.
+#
+# A narrow tag glob such as `v[0-9]+.[0-9]+.[0-9]+` would be tidier, but the
+# failure mode when a glob is subtly wrong is that releases silently never run --
+# and nothing tells you, because a workflow that does not match produces no run to
+# look at. Matching anything that starts like a version and then REJECTING a bad
+# one inside the job turns that silent miss into a red X with a message.
+#
+# The strict check is scripts/verify-release-version.mjs, which requires the tag
+# (minus an optional leading `v`) to equal both manifest.json and XIW.VERSION.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+      - '[0-9]*'
+
+# contents: write is required to create the release. Nothing else is granted.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, not the default depth of 1. `gh release create
+          # --generate-notes` builds its notes from the commits and tags leading
+          # up to this one, and a shallow clone has none of them -- the release
+          # would come out with empty notes and look like it succeeded.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the test dependency
+        run: npm ci
+
+      - name: Verify the tag matches the extension's version
+        # First, because it is instant and a mismatch means the tag is wrong. No
+        # point testing or packaging a release that cannot be named.
+        run: node scripts/verify-release-version.mjs "$GITHUB_REF_NAME"
+
+      - name: Test
+        # A release must not ship a red suite. Same command as CI, run again here
+        # because a tag can be pushed at a commit that never went through CI.
+        run: npm test
+
+      - name: Package the extension
+        id: package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          artifact="x-image-weaver-v${version}.zip"
+
+          # Only the files Chrome loads. The repository's tests, docs, CI config
+          # and the jsdom devDependency have no business in a distributed
+          # extension: a leaner package is easier to inspect before someone
+          # loads it into their browser, which is the point of publishing one.
+          #
+          # -X strips extra file attributes so the archive does not depend on the
+          # machine that built it.
+          zip -r -X "$artifact" manifest.json src icons
+
+          # Printed so the run log shows what actually shipped.
+          unzip -l "$artifact"
+
+          {
+            echo "artifact=$artifact"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # `gh` rather than a third-party release action: it is already on the
+          # runner, and it keeps the supply chain to actions/* and the runner
+          # image. Fails if a release for this tag already exists, which is the
+          # behaviour you want -- re-running must not silently replace a
+          # published artifact.
+          gh release create "$GITHUB_REF_NAME" \
+            --title "X Image Weaver v${{ steps.package.outputs.version }}" \
+            --generate-notes \
+            "${{ steps.package.outputs.artifact }}"
