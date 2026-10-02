@@ -177,25 +177,36 @@ removes the risk of React swapping a node's media after the button was attached.
 
 ### Button placement
 
-The control sits in its own bar **directly after the post's own media block**, in the post's
-normal flow — the position TapToSee uses. The bar holds a muted count (`2 Images`) and a blue
-rounded pill labelled **Merge** with a split-image mark, always visible.
+There are two shapes and the context decides which, matching the reference:
 
-It is deliberately **not** overlaid on the media. An overlay covers the part of the composite
-the reader most wants to see, has to be hidden until hover to avoid being noise on every post,
-and needs `position` and `z-index` written onto X's own row to sit still. Putting the control
-below the media removes all three problems at once, and the media block is still found as the
-**deepest common ancestor of the post's own photo containers** so the bar follows the whole
-media area rather than one row of a nested grid.
+| Context | Control |
+|---|---|
+| A post's own page (`/<handle>/status/<id>`, and only for the post whose id matches) | A bar directly **after** the post's media: a muted `2 Images` count beside a blue rounded **Merge** pill with a split-image mark. |
+| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | A compact icon-only button **on** the media block, top-right. |
 
-It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard and
-announced correctly. `aria-disabled` and `aria-busy` carry the busy state rather than the
-`disabled` attribute: a disabled button cannot hold focus, so the keyboard user would lose
-their place the moment they activated it.
+The split is deliberate rather than two designs for one job. A feed card has no room
+below the media for a bar, and adding one to every card in a timeline changes the shape
+of the page; a post's own page has room, and a labelled control is clearer there. Both
+shapes are the same `<button>` with the same click behaviour — only the furniture and the
+label's visibility differ. The icon-only variant clips its label rather than removing it,
+so the accessible name survives.
 
-Finding the media block via `ownElements` matters here for the same reason as everywhere else —
-an outer post quoting a two-photo post has four photo containers in its subtree, and the common
-ancestor of all four would be the outer article rather than its media.
+The media block is always the **deepest common ancestor of the post's own photo
+containers**, so the control follows the whole media area rather than one row of a nested
+grid. In the feed variant that block also takes `position: relative` — the one place the
+extension writes a layout property onto an element it did not create — and the overlay
+carries its own `z-index`, because a positioned element with `z-index: auto` is not a
+stacking context and the control's number would otherwise be compared against every
+`z-index` on the page, where X's own overlays live.
+
+It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard
+and announced correctly. `aria-disabled` and `aria-busy` carry the busy state rather than
+the `disabled` attribute: a disabled button cannot hold focus, so the keyboard user would
+lose their place the moment they activated it.
+
+Finding the media block via `ownElements` matters here for the same reason as everywhere
+else — an outer post quoting a two-photo post has four photo containers in its subtree, and
+the common ancestor of all four would be the outer article rather than its media.
 
 ### Tunables
 

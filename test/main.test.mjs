@@ -565,11 +565,15 @@ test('an article quoting a post: every root is marked, and the outer takes only 
   // anywhere inside the quote.
   const outerRow = outer.querySelector('[data-testid="tweetPhoto"]').parentElement;
   assert.equal(outerRow.querySelectorAll('[data-testid="tweetPhoto"]').length, 2);
-  const outerBar = outer.querySelector('[data-xiw-bar]');
-  assert.ok(outerBar, "the outer post has a bar of its own");
-  assert.equal(outerBar.previousElementSibling, outerRow, "directly after the outer post's own media");
-  assert.equal(outerBar.closest('[data-testid="quoteTweet"]'), null, 'and not inside the quoted post');
-  assert.equal(outerBar.querySelectorAll(BUTTON).length, 1);
+  // The fixture is on a feed URL, so the control is the compact overlay variant
+  // that sits on the media; the labelled bar is only for a post's own page. Either
+  // way the placement claim is the same: this post's control belongs to this post's
+  // media and is not in the quote.
+  const outerControl = outer.querySelector('[data-xiw-control]');
+  assert.ok(outerControl, "the outer post has a control of its own");
+  assert.equal(outerControl.closest('[data-testid="quoteTweet"]'), null, 'and it is not inside the quoted post');
+  assert.equal(outerControl.parentElement, outerRow, 'it is on the outer post\'s own media block');
+  assert.equal(outerControl.querySelectorAll(BUTTON).length, 1);
 });
 
 // The same shape arriving after startup, which is the case that actually happens

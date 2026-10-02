@@ -56,6 +56,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   var BAR_CLASS = 'xiw-merge-bar';
   var COUNT_CLASS = 'xiw-merge-count';
   var ICON_CLASS = 'xiw-merge-icon';
+  var LABEL_CLASS = 'xiw-merge-label';
+  var OVERLAY_CLASS = 'xiw-merge-overlay';
+  var ICON_ONLY_CLASS = 'xiw-merge-button--icon';
   var BUTTON_CLASS = 'xiw-merge-button';
   var BUSY_CLASS = 'xiw-merge-button--busy';
   var STYLE_CLASS = 'xiw-styles';
@@ -128,6 +131,42 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 .${BUTTON_CLASS}:focus-visible {
   outline: 2px solid rgb(29, 155, 240);
   outline-offset: 2px;
+}
+
+/* The timeline control. The reference puts a compact icon on the media there and
+   the labelled pill only on a post's own page, where there is room under the
+   images for it. So this variant is the button with its label hidden, over the
+   media, and the card never grows a bar of its own. */
+.${OVERLAY_CLASS} {
+  all: initial;
+  box-sizing: border-box;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  /* Above the media inside the block, and nowhere else: the block is made a
+     stacking context below so this number is never compared against X's own
+     overlays, which live in the hundreds. */
+  z-index: 2;
+  display: flex;
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
+  padding: 8px;
+  border-radius: 9999px;
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${LABEL_CLASS} {
+  /* Clipped rather than hidden. display: none would take the words out of the
+     accessibility tree in engines that fall back to contents for the name, and
+     this button's name is the only thing a screen reader has to go on once the
+     label is off screen. Zero-size and clipped keeps it compact without lying
+     about what the control is. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Busy is a class and not only the label, so the state survives the pointer moving
@@ -210,39 +249,63 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     ensureStyles(doc);
 
     // Own-elements, for the same reason the photos are: an outer post quoting a
-    // mergeable post has the quoted post's bar somewhere in its subtree, and
+    // mergeable post has the quoted post's control somewhere in its subtree, and
     // `root.querySelector` would find it and conclude this post already has one.
-    if (XIW.ownElements(root, '.' + BAR_CLASS).length > 0) return true;
+    // The marker attribute is what is looked for, not a class, because the two
+    // variants carry different classes.
+    if (XIW.ownElements(root, '[data-xiw-control]').length > 0) return true;
 
-    var bar = doc.createElement('div');
-    bar.className = BAR_CLASS;
-    bar.setAttribute('data-xiw-bar', '');
-
-    // "2 Images" beside the control, as in the reference. The gallery is never a
-    // single image -- collectPhotoSources refuses fewer than two -- so this is
-    // always plural.
-    var count = doc.createElement('span');
-    count.className = COUNT_CLASS;
-    count.textContent = photos.length + ' Images';
-    bar.appendChild(count);
+    // The control has two shapes and the context decides which. On a post's own
+    // page there is room under the images for a labelled pill beside an image
+    // count; in a feed there is not, so the reference puts a compact icon on the
+    // media instead. Same button, same behaviour, different furniture.
+    var onPostPage = isPostDetail(root);
 
     var button = doc.createElement('button');
     button.setAttribute('type', 'button');
     button.setAttribute('aria-label', ARIA_LABEL);
     button.setAttribute('data-xiw-button', '');
-    button.className = BUTTON_CLASS;
+    button.className = onPostPage ? BUTTON_CLASS : BUTTON_CLASS + ' ' + ICON_ONLY_CLASS;
     button.appendChild(icon(doc));
-    button.appendChild(doc.createTextNode(IDLE_LABEL));
-    bar.appendChild(button);
 
-    // After the media, so the post reads media -> control -> timestamp. When the
-    // media block IS the root -- photos as direct children of the article, which X
-    // does not do but which no rule here should turn into an insertion outside the
-    // post -- appending inside the root is the safe direction to fail.
-    if (media !== root && media.parentElement) {
-      media.parentElement.insertBefore(bar, media.nextSibling);
+    // A span rather than a bare text node, so the icon-only variant can hide the
+    // words without touching the icon, and so busy/idle rewrites exactly one node.
+    var label = doc.createElement('span');
+    label.className = LABEL_CLASS;
+    label.textContent = IDLE_LABEL;
+    button.appendChild(label);
+
+    var control = doc.createElement('div');
+    control.setAttribute('data-xiw-control', '');
+
+    if (onPostPage) {
+      // "2 Images" beside the control, as in the reference. The gallery is never a
+      // single image -- collectPhotoSources refuses fewer than two -- so this is
+      // always plural.
+      control.className = BAR_CLASS;
+      control.setAttribute('data-xiw-bar', '');
+      var count = doc.createElement('span');
+      count.className = COUNT_CLASS;
+      count.textContent = photos.length + ' Images';
+      control.appendChild(count);
+      control.appendChild(button);
+
+      // After the media, so the post reads media -> control -> timestamp. When the
+      // media block IS the root -- photos as direct children of the article, which
+      // X does not do but which no rule here should turn into an insertion outside
+      // the post -- appending inside the root is the safe direction to fail.
+      if (media !== root && media.parentElement) {
+        media.parentElement.insertBefore(control, media.nextSibling);
+      } else {
+        root.appendChild(control);
+      }
     } else {
-      root.appendChild(bar);
+      control.className = OVERLAY_CLASS;
+      control.appendChild(button);
+      // Inside the media block, so it tracks the images wherever the card puts
+      // them, and so the reveal on hover is not needed to find it.
+      positionMedia(media);
+      media.appendChild(control);
     }
 
     // Per-button, not per-page: two posts can be stitched at once, and each
@@ -266,7 +329,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // listener, whether the button is disabled or not.
     function setBusy(next) {
       busy = next;
-      button.textContent = next ? BUSY_LABEL : IDLE_LABEL;
+      label.textContent = next ? BUSY_LABEL : IDLE_LABEL;
       if (next) {
         button.setAttribute('aria-busy', 'true');
         button.setAttribute('aria-disabled', 'true');
@@ -355,6 +418,53 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     });
 
     return true;
+  }
+
+  // Is this post being read on its own page rather than in a feed?
+  //
+  // The path is the reliable signal: a post's own page is /<handle>/status/<id>,
+  // and every feed -- home, profile, search, a media tab -- is something else. The
+  // id is compared as well, because replies render on a post's page too and those
+  // are ordinary cards, not the post being read; giving them a labelled bar would
+  // put one under every reply.
+  //
+  // Location comes off the root's own view rather than the global, so this keeps
+  // working when the file is evaluated into another realm -- which is exactly what
+  // the test harness does, and what an `instanceof` or a bare `location` would
+  // break on.
+  function isPostDetail(root) {
+    var view = root.ownerDocument && root.ownerDocument.defaultView;
+    var location = view && view.location;
+    if (!location || typeof location.pathname !== 'string') return false;
+
+    var onPost = /^\/[^/]+\/status\/(\d+)/.exec(location.pathname);
+    if (!onPost) return false;
+
+    return XIW.tweetMeta(root).tweetId === onPost[1];
+  }
+
+  // `position: relative` on the media block, so the overlay control's absolute
+  // positioning means "top-right of the media" rather than "top-right of whatever
+  // ancestor X happened to position". Written only when the block has no position
+  // of its own, so X's own layout is left alone wherever it already says something.
+  //
+  // This is the one place the extension writes a layout property onto an element it
+  // did not create, and it is why the overlay variant carries a z-index of its own:
+  // a positioned element with z-index: auto is not a stacking context, so without
+  // one the control's number would be compared against every z-index on the page.
+  function positionMedia(media) {
+    var view = media.ownerDocument && media.ownerDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== 'function') {
+      media.style.position = 'relative';
+      return;
+    }
+    var position = '';
+    try {
+      position = view.getComputedStyle(media).position || '';
+    } catch {
+      position = '';
+    }
+    if (position === '' || position === 'static') media.style.position = 'relative';
   }
 
   // The deepest element that contains every one of `elements`.

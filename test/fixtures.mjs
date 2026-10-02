@@ -27,11 +27,22 @@ const displayNameFor = (handle) => `${handle.charAt(0).toUpperCase()}${handle.sl
 //   quote    false/null for none, or another spec object -- passed straight back
 //            through this function -- wrapped in div[data-testid="quoteTweet"]
 //            inside the outer article.
-export function tweetFixture({ photos = [], videos = 0, quote = null, tweetId = '123', handle = 'someone' } = {}) {
+export function tweetFixture({
+  photos = [],
+  videos = 0,
+  quote = null,
+  tweetId = '123',
+  handle = 'someone',
+  // The page the post is being read on, which is a fact about the DOM the fixture
+  // builds and not only about the test: button.js chooses its control from the
+  // path, so a fixture on a status URL is a post being read on its own page and a
+  // fixture anywhere else is one in a feed.
+  url = 'https://x.com/',
+} = {}) {
   // A real base URL matters: `img.src` resolves against it, and X's real page
   // has one.
   const document = new JSDOM('<!doctype html><html><body></body></html>', {
-    url: 'https://x.com/',
+    url,
   }).window.document;
 
   const article = document.createElement('article');

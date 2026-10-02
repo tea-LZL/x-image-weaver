@@ -24,10 +24,10 @@ built in the page with Canvas 2D and downloaded straight from a blob URL.
 
 ## Use
 
-Open any post with two or more images. A **Merge** pill appears just below the media, next to
-a count of the images. Click it. The parts are fetched at original resolution, joined with no
-gap in the direction the post lays them out, and shown full-screen. **Download** saves the
-result as
+Open any post with two or more images and a **Merge** control appears — a compact icon on the
+media in a feed, and a labelled pill beside an image count under the media on a post's own
+page. Click it. The parts are fetched at original resolution, joined with no gap in the
+direction the post lays them out, and shown full-screen. **Download** saves the result as
 `x-image-weaver-<handle>-<tweetId>.png`.
 
 If the stitch fails, the overlay opens in an error state naming the cause with a Retry button.
@@ -71,7 +71,7 @@ npm install          # devDependency: jsdom. The extension itself ships none of 
 node --test test/*.test.mjs
 ```
 
-144 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
+147 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
 and fails.
 
 What is covered automatically: the pure helpers, the DOM extraction rules under jsdom
@@ -141,8 +141,9 @@ reloading the extension.**
       one wide image, not stacked.
 - [ ] A 4-image post (a 2×2 grid) — joined **top to bottom**, which is what the tap-to-see
       posts want.
-- [ ] The Merge control sits **below** the images, always visible, and does not cover the
-      composite.
+- [ ] In a feed, the control is a compact icon on the media, top-right, always visible.
+- [ ] On a post's own page, it is a labelled pill below the images, beside the count.
+- [ ] On a post's own page, the **replies** get the compact icon, not a bar each.
 - [ ] Post with **3** images — same.
 - [ ] Post with **4** images — same.
 - [ ] Single-image post — **no** button.

@@ -45,8 +45,22 @@ const originalConsoleError = console.error;
 // A fresh document and a fresh module instance per test: loadAll() resets XIW
 // and re-evaluates the six manifest scripts, and a new fixture document keeps
 // one test's injected buttons out of the next test's queries.
-function setup({ photos = [], videos = 0, quote = null, tweetId = '123', handle = 'ada', stitch, realOverlay = false } = {}) {
-  const document = tweetFixture({ photos, videos, quote, tweetId, handle });
+function setup({
+  photos = [],
+  videos = 0,
+  quote = null,
+  tweetId = '123',
+  handle = 'ada',
+  // Which page the post is being read on. button.js picks its control from the
+  // path -- a labelled pill under the media on a post's own page, a compact icon on
+  // the media in a feed -- so the context is part of the fixture, not a detail each
+  // test sets up for itself. Defaults to the post page, where the bar is.
+  context = 'post',
+  stitch,
+  realOverlay = false,
+} = {}) {
+  const url = context === 'post' ? `https://x.com/${handle}/status/${tweetId}` : 'https://x.com/home';
+  const document = tweetFixture({ photos, videos, quote, tweetId, handle, url });
   const window = document.defaultView;
 
   // A subclass, not a plain object, and not a patch of the real URL: the harness
@@ -335,6 +349,72 @@ test('a nested grid joins its parts top to bottom', () => {
   });
 });
 
+// --- 2c. the control depends on where the post is being read ----------------------
+//
+// The reference uses two shapes: a compact icon on the media in a feed, where there
+// is no room for anything else, and a labelled pill beside an image count under the
+// media on a post's own page, where there is. Both are the same button.
+
+test('a feed gets the compact icon on the media, not a bar', () => {
+  const t = setup({ photos: ['a', 'b'], context: 'timeline' });
+  t.XIW.button.mount(t.roots()[0]);
+
+  const control = t.document.querySelector('[data-xiw-control]');
+  assert.ok(control, 'a control exists');
+  assert.equal(control.className, 'xiw-merge-overlay', 'and it is the overlay shape');
+  assert.equal(control.parentElement, t.row(), 'sitting on the media block');
+  assert.equal(t.document.querySelector('[data-xiw-bar]'), null, 'with no bar, which would grow every card');
+  assert.equal(t.button().classList.contains('xiw-merge-button--icon'), true, 'and an icon-only button');
+  assert.equal(t.row().style.position, 'relative', 'the media block is made positioned to hold it');
+  // The visible words are clipped in this variant, so the accessible name is the
+  // only thing that says what the control does.
+  assert.equal(t.button().getAttribute('aria-label'), ARIA_LABEL, 'still announced as the action it performs');
+  assert.ok(t.button().querySelector('.xiw-merge-label'), 'and the label is present, just clipped rather than removed');
+});
+
+test("a post's own page gets the labelled bar and no overlay", () => {
+  const t = setup({ photos: ['a', 'b'], context: 'post' });
+  t.XIW.button.mount(t.roots()[0]);
+
+  assert.equal(t.document.querySelector('[data-xiw-control]').className, 'xiw-merge-bar');
+  assert.equal(t.document.querySelector('.xiw-merge-overlay'), null, 'no overlay on the media');
+  assert.equal(t.button().classList.contains('xiw-merge-button--icon'), false, 'and the label is shown');
+  assert.equal(t.row().style.position, '', 'the media block is left exactly as X laid it out');
+});
+
+test('a reply on a post page is a feed card, not the post being read', () => {
+  // The URL is a status page either way; only the post whose id matches it is the
+  // one being read. Without the id check every reply under a post would grow a bar.
+  const t = setup({ photos: ['a', 'b'], context: 'post', tweetId: '999' });
+
+  // Another post on the same page, whose permalink names a different status.
+  // Built inline because the fixture builds one post per document.
+  const reply = t.document.createElement('article');
+  reply.setAttribute('data-testid', 'tweet');
+  const permalink = t.document.createElement('a');
+  permalink.setAttribute('href', '/ada/status/111');
+  reply.appendChild(permalink);
+  const row = t.document.createElement('div');
+  for (const id of ['c', 'd']) {
+    const photo = t.document.createElement('div');
+    photo.setAttribute('data-testid', 'tweetPhoto');
+    const img = t.document.createElement('img');
+    img.setAttribute('src', pbsUrl(id));
+    photo.appendChild(img);
+    row.appendChild(photo);
+  }
+  reply.appendChild(row);
+  t.document.body.appendChild(reply);
+
+  t.XIW.button.mount(t.roots()[0]);
+  t.XIW.button.mount(reply);
+
+  const controls = t.document.querySelectorAll('[data-xiw-control]');
+  assert.equal(controls.length, 2, 'both posts have a control');
+  assert.equal(controls[0].className, 'xiw-merge-bar', 'the post the page is about gets the bar');
+  assert.equal(controls[1].className, 'xiw-merge-overlay', 'and the reply gets the feed shape');
+});
+
 // --- 3. it is a real button, and it is styled without X's help -----------------
 
 test('the control is a real labelled button with the required geometry', () => {
@@ -384,11 +464,17 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   );
   assert.match(css, /\.xiw-merge-icon \{/, 'the mark is styled and scoped');
   assert.doesNotMatch(css, /(^|[^-])button\s*\{/, 'no rule that X could read as one of its own buttons');
-  // The properties that put the control over the media in the first place. Their
-  // absence is the change, so it is asserted rather than assumed.
-  assert.doesNotMatch(css, /position:\s*absolute/, 'nothing is positioned over the media any more');
-  assert.doesNotMatch(css, /z-index/, 'and no stacking context is asked for');
-  assert.doesNotMatch(css, /opacity:\s*0;/, 'nor hidden until hovered: there is nothing to hide from');
+
+  // Two variants, two shapes, and the difference asserted rather than assumed.
+  const bar = /\.xiw-merge-bar \{([^}]*)\}/.exec(css);
+  const overlay = /\.xiw-merge-overlay \{([^}]*)\}/.exec(css);
+  assert.ok(bar, 'the post-page bar is styled');
+  assert.ok(overlay, 'and the feed overlay is styled');
+  assert.doesNotMatch(bar[1], /position:\s*absolute/, 'the bar is in the flow, under the media');
+  assert.match(overlay[1], /position:\s*absolute/, 'the overlay sits on the media');
+  assert.match(overlay[1], /z-index:\s*\d/, 'and carries its own z-index, since X positions things too');
+  assert.match(css, /button--icon/, 'the icon-only shape is styled');
+  assert.doesNotMatch(css, /opacity:\s*0;/, 'nothing is hidden until hovered: both variants are always visible');
 });
 
 // --- 4. the click re-collects the media -----------------------------------------
