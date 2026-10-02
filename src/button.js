@@ -153,6 +153,25 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
   padding: 8px;
   border-radius: 9999px;
+  /* Bare, like the reference -- no disc behind it. The button keeps its blue for
+     the hover and busy states, but at rest the glyph is the whole control, so it
+     needs its own contrast: a drop shadow is what keeps a white mark legible on
+     the pale half of a photograph as well as the dark half. Blue would be the
+     wrong answer here, because it has no guaranteed contrast against an arbitrary
+     image either. */
+  background-color: transparent;
+  color: #ffffff;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9));
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS}:hover {
+  background-color: rgba(0, 0, 0, 0.55);
+  filter: none;
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
+  background-color: rgba(0, 0, 0, 0.55);
+  filter: none;
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${LABEL_CLASS} {
@@ -266,7 +285,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     button.setAttribute('aria-label', ARIA_LABEL);
     button.setAttribute('data-xiw-button', '');
     button.className = onPostPage ? BUTTON_CLASS : BUTTON_CLASS + ' ' + ICON_ONLY_CLASS;
-    button.appendChild(icon(doc));
+    button.appendChild(icon(doc, onPostPage ? SPLIT_MARK : SPARKLE_MARK));
 
     // A span rather than a bare text node, so the icon-only variant can hide the
     // words without touching the icon, and so busy/idle rewrites exactly one node.
@@ -487,17 +506,25 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     return node;
   }
 
-  // The glyph beside the label: two panels with a bar under them, the split-image
-  // mark the reference uses. Inline SVG rather than a text glyph or a background
+  // The mark beside the label. Inline SVG rather than a text glyph or a background
   // image, so it inherits `currentColor` from the button and needs no request.
-  function icon(doc) {
+  //
+  // Two marks, because the reference uses two: a split-image mark (two panels and a
+  // bar) on the labelled pill, and a four-pointed sparkle on the bare icon the feed
+  // uses. They are the same control, so the difference is the shape of the furniture
+  // rather than of the action -- but a labelled pill with a sparkle on it or a bare
+  // split-image glyph in a feed would each be a shape the reference does not have.
+  var SPLIT_MARK = ['M2 4h8v12H2z', 'M14 4h8v12h-8z', 'M2 18h20v2H2z'];
+  var SPARKLE_MARK = ['M12 2c.9 4.6 3.4 7.1 8 8-4.6.9-7.1 3.4-8 8-.9-4.6-3.4-7.1-8-8 4.6-.9 7.1-3.4 8-8z'];
+
+  function icon(doc, mark) {
     var NS = 'http://www.w3.org/2000/svg';
     var svg = doc.createElementNS(NS, 'svg');
     svg.setAttribute('class', ICON_CLASS);
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('focusable', 'false');
-    var paths = ['M2 4h8v12H2z', 'M14 4h8v12h-8z', 'M2 18h20v2H2z'];
+    var paths = mark || SPLIT_MARK;
     for (var i = 0; i < paths.length; i++) {
       var path = doc.createElementNS(NS, 'path');
       path.setAttribute('d', paths[i]);

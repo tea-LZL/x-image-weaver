@@ -370,6 +370,11 @@ test('a feed gets the compact icon on the media, not a bar', () => {
   // only thing that says what the control does.
   assert.equal(t.button().getAttribute('aria-label'), ARIA_LABEL, 'still announced as the action it performs');
   assert.ok(t.button().querySelector('.xiw-merge-label'), 'and the label is present, just clipped rather than removed');
+  // The two variants carry different marks: a sparkle here, a split-image glyph on
+  // the pill. A labelled pill with a sparkle, or a bare split-image glyph in a feed,
+  // would each be a shape the reference does not use.
+  assert.equal(t.button().querySelectorAll('path').length, 1, 'the feed mark is the one-path sparkle');
+  assert.match(t.button().querySelector('path').getAttribute('d'), /^M12 2c/, 'and it is that path');
 });
 
 test("a post's own page gets the labelled bar and no overlay", () => {
@@ -435,6 +440,7 @@ test('the control is a real labelled button with the required geometry', () => {
   assert.equal(injected.style.position, '', 'not positioned: it sits below the media');
   assert.equal(injected.querySelector('.xiw-merge-icon').tagName.toLowerCase(), 'svg', 'with the split-image mark beside the label');
   assert.equal(injected.querySelectorAll('path').length, 3, 'drawn as paths, so it needs no request and inherits the colour');
+  assert.equal(injected.querySelector('path').getAttribute('d'), 'M2 4h8v12H2z', 'and it is the split-image mark, not the feed sparkle');
 });
 
 test('one stylesheet, scoped to this extension\'s own classes, injected once', () => {
