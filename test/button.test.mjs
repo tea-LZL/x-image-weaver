@@ -477,9 +477,18 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   assert.ok(bar, 'the post-page bar is styled');
   assert.ok(overlay, 'and the feed overlay is styled');
   assert.doesNotMatch(bar[1], /position:\s*absolute/, 'the bar is in the flow, under the media');
+  // Positioned AND layered, which is what fixes the dead click: X's stretched card
+  // link is an absolutely positioned overlay over the whole tweet and swallows the
+  // click unless the bar paints above it.
+  assert.match(bar[1], /position:\s*relative/, 'the bar is positioned, so it beats that overlay');
+  assert.match(bar[1], /z-index:\s*\d/, 'and layered');
+  assert.match(bar[1], /width:\s*100%/, 'and takes its own line rather than being laid out beside the media');
   assert.match(overlay[1], /position:\s*absolute/, 'the overlay sits on the media');
+  assert.match(overlay[1], /left:\s*\d/, 'on its left, where the reference puts it');
   assert.match(overlay[1], /z-index:\s*\d/, 'and carries its own z-index, since X positions things too');
   assert.match(css, /button--icon/, 'the icon-only shape is styled');
+  // A disc rather than a bare glyph: the bare version read as a missing control.
+  assert.match(css, /button--icon \{(?:[^}]*?)background-color:\s*rgba\(0, 0, 0, 0\.6\)/, 'on a disc with contrast against any image');
   assert.doesNotMatch(css, /opacity:\s*0;/, 'nothing is hidden until hovered: both variants are always visible');
 });
 
@@ -517,10 +526,11 @@ test('the click stitches the media that is there now, not the media at mount', a
   assert.equal(t.XIW.collectPhotoIds(t.roots()[0])[0], 'clickA', 'and the mount-time ids are long gone from the page');
 });
 
-test('a post that stops being mergeable after mount does nothing when clicked', async () => {
-  // Mixed media is the interesting version: the button was justified at mount
-  // and is not justified now, and there is nothing to report about a post that
-  // cannot be merged.
+test('a post that stops being mergeable says so instead of doing nothing', async () => {
+  // Mixed media is the interesting version: the control was justified at mount and
+  // is not justified now. This used to be a bare return -- a control on screen that
+  // is clicked and does nothing, which is the failure the spec calls out. It now
+  // reports, and removes itself, because it has nothing left to act on.
   const video = setup({ photos: ['aa', 'bb'] });
   video.XIW.button.mount(video.roots()[0]);
   assert.ok(video.button(), 'mounted while the post was still just two photos');
@@ -531,11 +541,11 @@ test('a post that stops being mergeable after mount does nothing when clicked', 
   await video.settle();
 
   assert.equal(video.stitched.length, 0, 'no stitch for media that is no longer mergeable');
-  assert.equal(video.shown.length, 0, 'no overlay');
-  assert.equal(video.shownErrors.length, 0, 'and no error: this is a silent no-op, not a failure');
-  assert.equal(withVideo.defaultPrevented, true, 'though the event was still stopped before X could see it');
-  assert.equal(video.button().hasAttribute('aria-disabled'), false, 'and the button never went busy');
-  assert.equal(video.button().textContent, 'Merge');
+  assert.equal(video.shown.length, 0, 'and no composite shown');
+  assert.equal(video.shownErrors.length, 1, 'but a reported failure, not silence');
+  assert.match(String(video.shownErrors[0].err && video.shownErrors[0].err.message), /no longer be read/);
+  assert.equal(video.button(), null, 'and the dead control is gone rather than left to be clicked again');
+  assert.equal(withVideo.defaultPrevented, true, 'the event was still stopped before X could see it');
 
   const emptied = setup({ photos: ['aa', 'bb'] });
   emptied.XIW.button.mount(emptied.roots()[0]);
@@ -544,7 +554,8 @@ test('a post that stops being mergeable after mount does nothing when clicked', 
   await emptied.settle();
 
   assert.equal(emptied.stitched.length, 0, 'the same for a post whose media was removed outright');
-  assert.equal(emptied.shown.length + emptied.shownErrors.length, 0);
+  assert.equal(emptied.shownErrors.length, 1, 'and it reports too');
+  assert.equal(emptied.shown.length, 0, 'no composite for a post with no media');
 });
 
 // --- 5. the click is X's click, and only ours ------------------------------------

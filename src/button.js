@@ -88,10 +88,25 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 .${BAR_CLASS} {
   all: initial;
   box-sizing: border-box;
+  /* Positioned, so it paints above X's stretched card link rather than under it.
+     That link is an absolutely positioned overlay covering the whole tweet and it
+     is what made the button do nothing when clicked: the click was landing on the
+     link, not on the button, so the handler never ran. Any positioned element with
+     a z-index beats an absolutely positioned one with z-index: auto, which is what
+     that overlay is. */
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
+  /* Its own line under the media. The parent may be a flex row or a grid and a
+     bare block child of either would be laid out beside the media instead of
+     under it, which is how the bar came to overlap the timestamp and views. */
+  flex: 0 0 100%;
+  width: 100%;
+  max-width: 100%;
+  grid-column: 1 / -1;
   padding: 10px 0 4px;
   font: 400 15px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -140,38 +155,39 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 .${OVERLAY_CLASS} {
   all: initial;
   box-sizing: border-box;
+  /* To the left of the images and vertically centred, which is where the reference
+     puts it. Absolute so it does not disturb the media's own layout -- X's grid
+     owns that -- and relative to the media block, whose position is asserted below
+     so this anchors to the images rather than to whatever ancestor X left
+     positioned. */
   position: absolute;
-  top: 8px;
-  right: 8px;
-  /* Above the media inside the block, and nowhere else: the block is made a
-     stacking context below so this number is never compared against X's own
-     overlays, which live in the hundreds. */
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  /* Above the media's own contents, and above X's stretched card link, which is an
+     absolutely positioned overlay over the whole tweet and would otherwise swallow
+     the click: a control that cannot be clicked is the failure this number exists
+     to prevent. */
   z-index: 2;
   display: flex;
+  /* The media block is the containing block, not a clipping context. */
+  max-width: 100%;
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
   padding: 8px;
   border-radius: 9999px;
-  /* Bare, like the reference -- no disc behind it. The button keeps its blue for
-     the hover and busy states, but at rest the glyph is the whole control, so it
-     needs its own contrast: a drop shadow is what keeps a white mark legible on
-     the pale half of a photograph as well as the dark half. Blue would be the
-     wrong answer here, because it has no guaranteed contrast against an arbitrary
-     image either. */
-  background-color: transparent;
+  /* A disc rather than a bare glyph. The bare version reads as a missing control
+     against pale artwork and against a busy image, which is the report that
+     produced this rule; a translucent disc has contrast against anything, and the
+     glyph keeps its drop shadow on top of it. */
+  background-color: rgba(0, 0, 0, 0.6);
   color: #ffffff;
-  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9));
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS}:hover {
-  background-color: rgba(0, 0, 0, 0.55);
-  filter: none;
-}
-
-.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
-  background-color: rgba(0, 0, 0, 0.55);
-  filter: none;
+  background-color: rgba(0, 0, 0, 0.8);
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${LABEL_CLASS} {
@@ -367,7 +383,23 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       // fetch it precedes. The sources, not the ids: each one carries the format
       // as well as the id, and the id alone does not name a fetchable URL.
       var sources = XIW.collectPhotoSources(root);
-      if (sources === null) return;
+      if (sources === null) {
+        // Reported, not swallowed. This used to be a bare return, and a bare
+        // return here is a control that is on screen, is clicked, and does
+        // nothing at all -- the exact failure the spec calls out as reading as a
+        // broken extension. It is reachable: the post's media can be re-rendered
+        // between the mount and the click, and a post that was a gallery when the
+        // button was attached need not still be one.
+        //
+        // The control goes too. It has nothing left to act on, and leaving it
+        // would invite the same dead click again.
+        control.remove();
+        XIW.overlay.showError(
+          { code: 'NO-MEDIA', message: "This post's images can no longer be read." },
+          null
+        );
+        return;
+      }
 
       // Read at click time, like the sources: X can re-lay-out a post's media
       // after the button was attached, and the direction is a fact about the

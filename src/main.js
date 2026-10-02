@@ -139,7 +139,21 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // but it throws away this file's entire cost bound, re-running the
     // mergeability read and its two getComputedStyle reads per post per frame,
     // for nothing.
-    if (root.dataset.xiwDone !== undefined) return;
+    if (root.dataset.xiwDone !== undefined) {
+      // The marker says a control landed once, not that it is still there, and on
+      // a timeline those come apart: X virtualises cards, recycling the element
+      // and re-rendering its subtree, and a re-render that rebuilds the media
+      // takes the control with it while the marker survives on the article. Nothing
+      // else would ever put it back -- the article is marked, so no later mutation
+      // re-examines it -- and the post silently loses its control, which is the
+      // reported "no icon on the timeline".
+      //
+      // Checking is one query per marked root that a mutation touched, and the
+      // repair is free when the control is still there: mount() finds it and returns
+      // true without touching the DOM.
+      if (XIW.ownElements(root, '[data-xiw-control]').length > 0) return;
+      delete root.dataset.xiwDone;
+    }
 
     var mounted = false;
     try {

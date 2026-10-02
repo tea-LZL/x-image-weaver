@@ -71,7 +71,7 @@ npm install          # devDependency: jsdom. The extension itself ships none of 
 node --test test/*.test.mjs
 ```
 
-147 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
+148 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
 and fails.
 
 What is covered automatically: the pure helpers, the DOM extraction rules under jsdom
@@ -141,8 +141,12 @@ reloading the extension.**
       one wide image, not stacked.
 - [ ] A 4-image post (a 2×2 grid) — joined **top to bottom**, which is what the tap-to-see
       posts want.
-- [ ] In a feed, the control is a compact icon on the media, top-right, always visible.
-- [ ] On a post's own page, it is a labelled pill below the images, beside the count.
+- [ ] In a feed, the control is a compact icon on the **left** of the media, vertically
+      centred, on a dark disc, always visible.
+- [ ] Clicking it works — it is not swallowed by X's own card link.
+- [ ] Scrolling a timeline and back does not lose the control on a recycled card.
+- [ ] On a post's own page, it is a labelled pill below the images, beside the count, on its
+      own line — not overlapping the timestamp or the view counts.
 - [ ] On a post's own page, the **replies** get the compact icon, not a bar each.
 - [ ] Post with **3** images — same.
 - [ ] Post with **4** images — same.

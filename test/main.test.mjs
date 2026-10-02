@@ -365,6 +365,42 @@ test('media arriving after the article still gets a button', async () => {
   assert.equal(article.getAttribute(MARKER), '');
 });
 
+// A control a re-render removed must come back.
+//
+// This is the timeline's failure, and it is specific to a feed: X virtualises
+// cards, recycling the article element and re-rendering its subtree, so a commit
+// can rebuild the media and take the control with it while the `data-xiw-done`
+// marker survives on the article. Marked-and-gone looks exactly like
+// marked-and-fine to the observer, so nothing re-examines the post and it silently
+// loses its control -- which is what "no icon on the timeline" was.
+//
+// The repair must not depend on the marker being cleared by hand: the point is that
+// the code notices.
+test('a control removed by a re-render is restored on the next scan', async () => {
+  const { document, window } = empty();
+
+  const article = tweet(document);
+  document.body.appendChild(article);
+  await settle(window);
+  assert.equal(article.querySelectorAll(BUTTON).length, 1, 'mounted on arrival');
+
+  // What a recycled card looks like: the control is gone, the article and its
+  // marker are not.
+  article.querySelector('[data-xiw-control]').remove();
+  assert.equal(article.querySelectorAll(BUTTON).length, 0, 'precondition: the control is gone');
+  assert.equal(article.getAttribute(MARKER), '', 'and the article still says it was done');
+
+  // Any later mutation of that post gives the scan its chance. A re-render that
+  // rebuilt the media would be one.
+  const row = article.querySelector('[data-testid="tweetPhoto"]').parentElement;
+  const extra = tweet(document, { photos: ['cc', 'dd'] });
+  row.appendChild(extra.querySelector('[data-testid="tweetPhoto"]'));
+  await settle(window);
+
+  assert.equal(article.querySelectorAll(BUTTON).length, 1, 'the control is back');
+  assert.equal(article.querySelectorAll('[data-xiw-control]').length, 1, 'exactly one of it');
+});
+
 // The recovery guarantee the drain's `isConnected` skip depends on.
 //
 // That skip drops any queued node React detached before the frame ran. If a tweet

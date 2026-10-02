@@ -167,6 +167,13 @@ eligible and is re-examined when something inside it changes; that is bounded by
 A root that throws is the one case marked anyway: a fault is not "not yet", and an unmarked
 faulting root would be re-attempted on every later mutation of that post, logging each time.
 
+**The marker records that a control landed, not that it is still there**, and on a timeline
+those come apart: X virtualises cards, recycling the article element and re-rendering its
+subtree, so a commit can take the control with it while the marker survives. Nothing else
+would put it back — the article is marked, so no later mutation re-examines it — and the
+post silently loses its control. A marked root is therefore checked for its control on each
+scan and un-marked when the control is gone, which makes the marker self-healing.
+
 **A mutation is resolved to the nearest enclosing root, not to the added node.** A tweet's
 images arrive in a commit after the article does, and that commit adds a node deep inside a
 root, where scanning the node and its descendants finds no root at all. Walking up to the
@@ -182,7 +189,7 @@ There are two shapes and the context decides which, matching the reference:
 | Context | Control |
 |---|---|
 | A post's own page (`/<handle>/status/<id>`, and only for the post whose id matches) | A bar directly **after** the post's media: a muted `2 Images` count beside a blue rounded **Merge** pill with a split-image mark. |
-| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | A compact icon-only button **on** the media block, top-right. |
+| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | A compact icon-only button **on** the media block, at its left edge and vertically centred, on a translucent disc. |
 
 The split is deliberate rather than two designs for one job. A feed card has no room
 below the media for a bar, and adding one to every card in a timeline changes the shape
@@ -190,6 +197,22 @@ of the page; a post's own page has room, and a labelled control is clearer there
 shapes are the same `<button>` with the same click behaviour — only the furniture and the
 label's visibility differ. The icon-only variant clips its label rather than removing it,
 so the accessible name survives.
+
+The feed variant sits on a translucent disc rather than as a bare glyph: a bare white mark
+reads as a missing control against pale artwork, which is exactly how it was reported.
+
+**Both variants are positioned, and it is not cosmetic.** X's stretched card link is an
+absolutely positioned overlay covering the whole tweet; a static control is painted beneath
+it and the click lands on the link instead of the button, so the handler never runs. The
+bar takes `position: relative` with a `z-index`, and the feed overlay `position: absolute`
+with one. The bar also takes `width: 100%` so it gets its own line: a bare block child of a
+flex row or grid is laid out beside the media rather than under it, which is how it came to
+overlap the timestamp and the view counts.
+
+An empty click-time collect — the post's media was re-rendered and is no longer a readable
+gallery — is **reported**, not swallowed. The control removes itself and the overlay opens
+in its error state. A bare `return` there is a control that is on screen, is clicked, and
+does nothing, which is the failure this spec's failure-modes table names.
 
 The media block is always the **deepest common ancestor of the post's own photo
 containers**, so the control follows the whole media area rather than one row of a nested
@@ -410,6 +433,6 @@ cannot tell you whether a control is covering the image.
 | Image 404 / 403 / timeout | Overlay error state naming `NETWORK`, with Retry. |
 | Composite exceeds canvas height or area cap | Silent uniform downscale, logged to the console. |
 | `toBlob` returns `null` (allocation failure) | Retry once as JPEG at quality 0.95; caller notes the format change. |
-| React re-parents a node or swaps its media | Sources re-collected at click time; the `data-xiw-done` marker is written only when a button actually landed, so a half-rendered post stays eligible. |
+| React re-parents a node or swaps its media | Sources re-collected at click time; the `data-xiw-done` marker is written only when a control actually landed, and is re-checked so a recycled card gets its control back. |
 | X's `overflow: hidden` crops the button | The control is not inside the media at all: it sits in its own bar directly after the media block, in the post's normal flow. |
 | Duplicate X media IDs in one post | Preserved, not de-duplicated. |
