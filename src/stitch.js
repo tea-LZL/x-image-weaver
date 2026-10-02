@@ -33,17 +33,19 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
  *
  * @function XIW.stitchVertical
  * @async
- * @param {string[]} mediaIds X media ids in DOM order -- the order
- *   XIW.collectPhotoIds returns them, and the whole contract, because part n is
- *   drawn at the running y offset of the n-1 parts above it.
+ * @param {Array<{id: string, format: string|null}>} sources X media in DOM order
+ *   -- the order XIW.collectPhotoSources returns them, and the whole contract,
+ *   because part n is drawn at the running y offset of the n-1 parts above it.
+ *   The format travels with the id because the id alone is not a fetchable
+ *   resource; see originalUrl.
  * @returns {Promise<{blob: Blob, format: 'image/png'|'image/jpeg'}>} Resolves
  *   once with the composited image. `blob.type` is the same string as `format`;
  *   PNG is attempted first and JPEG at XIW.TUNABLES.JPEG_FALLBACK_QUALITY only
  *   when the PNG encode produced nothing.
  * @throws {XIW.StitchError} `code` `'NETWORK'` or `'DECODE'`, per above. A
- *   non-array or empty `mediaIds` is a caller bug rather than a runtime failure,
+ *   non-array or empty `sources` is a caller bug rather than a runtime failure,
  *   so it is left to propagate as the TypeError XIW.computeCanvasSize throws
- *   rather than laundered into one of the two codes above -- XIW.collectPhotoIds
+ *   rather than laundered into one of the two codes above -- XIW.collectPhotoSources
  *   already refuses anything with fewer than two photos, so nothing shipped
  *   can reach that path.
  *
@@ -63,10 +65,10 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   }
   XIW.StitchError = StitchError;
 
-  XIW.stitchVertical = async function stitchVertical(mediaIds) {
+  XIW.stitchVertical = async function stitchVertical(sources) {
     // Fetches in parallel: they are independent, and a 6-part gallery would
     // otherwise pay the round trip six times over.
-    var blobs = await Promise.all(mediaIds.map(fetchOriginal));
+    var blobs = await Promise.all(sources.map(fetchOriginal));
 
     // Decodes one at a time on purpose. A stitched canvas up to
     // MAX_CANVAS_HEIGHT tall is the memory this function cannot avoid; N
@@ -77,7 +79,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     var canvas = null;
     try {
       for (var i = 0; i < blobs.length; i++) {
-        var mediaId = mediaIds[i];
+        var mediaId = sources[i].id;
         var source = await decodeTile(blobs[i], mediaId);
         tiles.push(tileFrom(source, mediaId));
       }
@@ -103,18 +105,34 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     }
   };
 
-  // name=orig is the untouched upload. Every other size X serves is
-  // post-processed and, for a long edge over 4096, smaller than the original --
-  // compositing downscaled parts produces a downscaled, softer result that
-  // still looks correct at a glance.
-  function originalUrl(mediaId) {
-    return 'https://pbs.twimg.com/media/' + mediaId + '?name=orig';
+  // The URL X's CDN will actually serve the untouched upload from.
+  //
+  // Two parameters, and both are load-bearing. `name=orig` is the untouched upload;
+  // every other size X serves is post-processed and, for a long edge over 4096,
+  // smaller than the original -- compositing downscaled parts produces a
+  // downscaled, softer result that still looks correct at a glance. `format` is
+  // what tells the CDN which encoding to resolve at all: the id alone is not a
+  // fetchable resource, and `?name=orig` without a format is a 404, verified
+  // against the live CDN.
+  //
+  // A source with no usable format -- which X's markup does not produce, but which
+  // this must survive rather than fail on -- falls back to jpg, by far the most
+  // common upload. The check is on the value, not on `null`: an empty string or a
+  // non-string would build `?format=&name=orig`, which is the same 404 as omitting
+  // it, so the guard has to be "is this a usable format" rather than "is this
+  // field present". Guessing is the last resort here and not the strategy: a
+  // format that arrives from the DOM is always used as given.
+  function originalUrl(source) {
+    var format = source.format;
+    if (typeof format !== 'string' || format === '') format = 'jpg';
+    return 'https://pbs.twimg.com/media/' + source.id + '?format=' + encodeURIComponent(format) + '&name=orig';
   }
 
-  async function fetchOriginal(mediaId) {
+  async function fetchOriginal(source) {
+    var mediaId = source.id;
     var response;
     try {
-      response = await fetch(originalUrl(mediaId), {
+      response = await fetch(originalUrl(source), {
         // force-cache, not the default: the timeline has already pulled a
         // thumbnail of every part, and revalidating one request per part is a
         // visible stall. ?name=orig is a distinct cache key from the thumbnail,

@@ -35,7 +35,20 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // would happily return an id from any origin. X's media URLs carry no trailing
   // slash after the id — the query string starts immediately — so anchoring on the
   // end of the pathname is what makes this correct.
-  XIW.mediaIdFromUrl = function mediaIdFromUrl(raw) {
+  //
+  // The id alone is not enough to fetch a part, which is the bug this pair exists
+  // to prevent. X's CDN resolves an image's encoding from the `format` query
+  // parameter, and a URL that carries only `?name=orig` is a 404 — verified against
+  // the live CDN. X's DOM always spells the format out, because the thumbnail it
+  // renders is itself `?format=jpg&name=small` (or png/webp), so the format is
+  // right there to be read off the same URL as the id.
+  //
+  // `format` comes back lowercased, and null when it is absent or does not look
+  // like an image extension — never a value a caller could build a URL out of
+  // blindly. A caller that needs a definite format picks its own default. The
+  // check is deliberately loose rather than an allowlist of today's formats, so a
+  // format X adds later still works.
+  XIW.mediaSourceFromUrl = function mediaSourceFromUrl(raw) {
     var url;
     try {
       url = new URL(raw);
@@ -44,7 +57,18 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     }
     if (url.hostname !== 'pbs.twimg.com') return null;
     var media = /^\/media\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
-    return media ? media[1] : null;
+    if (!media) return null;
+
+    var format = url.searchParams.get('format');
+    if (format !== null) format = format.toLowerCase();
+    if (format !== null && !/^[a-z0-9]{2,5}$/.test(format)) format = null;
+
+    return { id: media[1], format: format };
+  };
+
+  XIW.mediaIdFromUrl = function mediaIdFromUrl(raw) {
+    var source = XIW.mediaSourceFromUrl(raw);
+    return source === null ? null : source.id;
   };
 
   XIW.computeCanvasSize = function computeCanvasSize(tiles) {

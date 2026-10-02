@@ -148,13 +148,15 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    * @param {Element} root A tweet root: `article[data-testid="tweet"]` or
    *   `div[data-testid="quoteTweet"]`. Anything else is a no-op, and so is
    *   anything that is not an element at all.
-   * @returns {void}
+   * @returns {boolean} True when a button is on the post after this call, false
+   *   when the post is not mergeable yet or not mergeable at all. The caller owns
+   *   the `data-xiw-done` marker and must only write it on `true`; see below.
    * @description Puts one Merge button on the post's media row, if the post is
    * mergeable, and wires it to `XIW.stitchVertical` and `XIW.overlay`.
    *
-   * A no-op, leaving the DOM untouched, when `XIW.collectPhotoIds(root)` returns
-   * `null` -- no photos, one photo, a video anywhere in the post, or a photo
-   * whose media URL yields no id. That call is also what makes a junk `root`
+   * A no-op, leaving the DOM untouched, when `XIW.collectPhotoSources(root)`
+   * returns `null` -- no photos, one photo, a video anywhere in the post, or a
+   * photo whose media URL yields no id. That call is also what makes a junk `root`
    * safe: dom.js refuses anything it cannot query, so this function never reads
    * off an element it has not just been told is a real root.
    *
@@ -162,29 +164,44 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    * stylesheet are written on every call, before the check for an existing
    * button, and the button is only created when there is not one already. So
    * calling this twice for one root produces one button and still repairs a row
-   * a React re-render has taken our class back from. `data-xiw-done` is the
-   * caller's marker and is neither read nor written here.
+   * a React re-render has taken our class back from.
    *
-   * The IDs collected to decide mergeability are not kept. The click handler
-   * collects again, and if that answer is `null` it returns silently: React may
-   * have swapped the post's media since the button was attached, and a post that
-   * is no longer mergeable has nothing to say.
+   * The return value is not decoration, and neither is the absent marker write:
+   * `false` is the only thing that keeps a half-rendered post eligible. React
+   * fills a tweet's media in over more than one commit, so a root is routinely
+   * seen while it has zero or one photo, and a post whose media has not arrived
+   * looks exactly like a post that is not a gallery. A caller that marked both
+   * as done would never look at the first one again -- which is exactly what made
+   * the button appear inconsistently in the feed.
+   *
+   * The sources collected to decide mergeability are not kept either. The click
+   * handler collects again, and if that answer is `null` it returns silently:
+   * React may have swapped the post's media since the button was attached, and a
+   * post that is no longer mergeable has nothing to say.
    */
   function mount(root) {
-    if (XIW.collectPhotoIds(root) === null) return;
+    if (XIW.collectPhotoSources(root) === null) return false;
 
-    // The row is the shared parent of the post's own photo containers -- the
-    // first photo's parentElement. The own-ness is the part that is easy to get
-    // wrong: an outer post quoting a two-photo post has four photo containers,
-    // and appending to the first one's parent is the difference between a button
-    // that merges this post's images and one that merges the quoted post's. The
-    // rule is dom.js's and it is exported for exactly this second use, so the
-    // two consumers cannot drift.
+    // The container the button is anchored to: the deepest node that holds ALL of
+    // the post's own photos.
+    //
+    // Not the first photo's parentElement, which is what this used to do and which
+    // put the button in a different place depending on how many images the post
+    // has. X lays a 4-image gallery out as a grid, and the grid is nested -- the
+    // first photo's parent is one row of it, not the gallery -- so the button
+    // landed at the top-right of the top row, halfway down the media, while on a
+    // 2-image post it landed at the top-right of the whole thing. Anchoring to the
+    // common ancestor makes it the top-right of the media area for every layout,
+    // which is the same spot on every post.
+    //
+    // Own-photos, not all photos: an outer post quoting a two-photo post has four
+    // photo containers in its subtree, and the common ancestor of all four would
+    // be the outer article -- the button would sit over the author's name. The
+    // rule for which media a root owns is dom.js's and is exported for exactly
+    // this second use, so the two consumers cannot drift.
     var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
-    var first = photos[0];
-    if (!first || !first.parentElement) return;
-
-    var row = first.parentElement;
+    var row = commonAncestor(photos);
+    if (!row || !row.parentElement) return false;
     var doc = root.ownerDocument;
 
     // The repairs come before the idempotency guard, and that ordering is the
@@ -198,7 +215,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     positionRow(row);
     row.classList.add(ROW_CLASS);
     row.setAttribute('data-xiw-row', '');
-    if (row.querySelector('.' + BUTTON_CLASS)) return;
+    if (row.querySelector('.' + BUTTON_CLASS)) return true;
 
     var button = doc.createElement('button');
     button.setAttribute('type', 'button');
@@ -254,14 +271,15 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     async function merge() {
       if (busy) return;
 
-      // Constraint 2. collectPhotoIds is a pure read and costs less than the
-      // fetch it precedes.
-      var ids = XIW.collectPhotoIds(root);
-      if (ids === null) return;
+      // Constraint 2. collectPhotoSources is a pure read and costs less than the
+      // fetch it precedes. The sources, not the ids: each one carries the format
+      // as well as the id, and the id alone does not name a fetchable URL.
+      var sources = XIW.collectPhotoSources(root);
+      if (sources === null) return;
 
       setBusy(true);
       try {
-        var composite = await XIW.stitchVertical(ids);
+        var composite = await XIW.stitchVertical(sources);
       } catch (err) {
         // Catch and route through the overlay rather than leaving the promise
         // rejected: this is the only failure this extension has a UI for, and
@@ -320,6 +338,28 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       event.stopPropagation();
       start();
     });
+
+    return true;
+  }
+
+  // The deepest element that contains every one of `elements`.
+  //
+  // Starts at the first element and walks upwards only as far as the others
+  // require, so the answer is the deepest common ancestor rather than any
+  // ancestor. `contains` is inclusive, which is what makes the single-element case
+  // return that element rather than its parent.
+  //
+  // Returns null for an empty list, and cannot return null otherwise: every photo
+  // in a post shares the article as an ancestor at worst. Callers still check,
+  // because the empty case is the one they must not anchor to.
+  function commonAncestor(elements) {
+    if (elements.length === 0) return null;
+    var node = elements[0];
+    for (var i = 1; i < elements.length; i++) {
+      while (node && !node.contains(elements[i])) node = node.parentElement;
+      if (!node) return null;
+    }
+    return node;
   }
 
   XIW.button = { mount: mount };

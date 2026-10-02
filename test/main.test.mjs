@@ -151,17 +151,28 @@ test('the initial scan covers the timeline already rendered', () => {
   assert.equal(marked(document).length, 1);
 });
 
-// A post with no media gets a marker and no button: the marker records that the
-// root was processed, not that it was mergeable. That distinction is what keeps
-// a later mutation touching a non-mergeable post from retrying it forever.
-test('a non-mergeable root is marked and skipped without a button', async () => {
+// A post that is not a gallery gets no button and NO marker.
+//
+// This test used to assert the opposite, and that assertion was the bug: marking
+// a root that produced no button is what made the button appear inconsistently in
+// the feed. At the moment a post is first observed, "this is a single-image post"
+// and "this post's images have not rendered yet" are the same observation, and
+// React does the second constantly -- a tweet's shell is committed before its
+// media. Treating the first observation as final meant those posts were never
+// looked at again.
+//
+// The cost of the correction is that a genuinely non-mergeable post stays
+// eligible and is re-examined when something inside it changes. That is bounded
+// by the Set (once per frame per root) and is the price of not knowing which of
+// the two cases we are looking at.
+test('a non-mergeable root gets no button and stays eligible', async () => {
   const { document, window } = empty();
   document.body.appendChild(tweet(document, { photos: ['aa'] }));
   document.body.appendChild(tweet(document, { photos: [] }));
   await settle(window);
 
   assert.equal(buttons(document).length, 0);
-  assert.equal(marked(document).length, 2);
+  assert.equal(marked(document).length, 0, 'nothing was merged, so nothing may be marked done');
 });
 
 // --- 2. a tweet added after startup, through a real observer -------------------
@@ -307,6 +318,51 @@ test('a throwing root does not stop the rest of the frame from mounting', async 
   assert.equal(good.querySelectorAll(BUTTON).length, 1, 'the neighbour is still mounted');
   assert.equal(errors.length, 1, 'and the failure was reported rather than swallowed');
   assert.match(String(errors[0][0]), /could not decorate/);
+});
+
+// A post whose media has not rendered yet must still get its button later.
+//
+// This is the case that made the button appear inconsistently in the feed. React
+// mounts a tweet's shell and fills in its media over more than one commit, so a
+// root is routinely observed while it has zero or one photo. If that observation
+// is treated as final, the post is never looked at again: the root is already
+// marked, and a later media commit is a childList change *inside* it, which only
+// re-scans the added node and finds no root.
+//
+// The marker is the assertion that matters. A root that was examined and found
+// unmergeable must stay eligible, because "not mergeable yet" and "not mergeable"
+// are indistinguishable at that moment.
+test('media arriving after the article still gets a button', async () => {
+  const { document, window } = empty();
+
+  // The shell: a real tweet shape with an empty media row, which is what X has
+  // rendered by the time the observer first sees the article.
+  const article = tweet(document, { photos: [] });
+  document.body.appendChild(article);
+  await settle(window);
+
+  assert.equal(article.querySelectorAll(BUTTON).length, 0, 'nothing to merge yet');
+  assert.equal(
+    article.getAttribute(MARKER),
+    null,
+    'and NOT marked, or the later media commit can never be acted on',
+  );
+
+  // The media lands in a later commit, the way X does it.
+  const row = article.querySelector('[data-testid="tweetPhoto"]')?.parentElement
+    ?? article.lastElementChild;
+  for (const id of ['aa', 'bb']) {
+    const photo = document.createElement('div');
+    photo.setAttribute('data-testid', 'tweetPhoto');
+    const img = document.createElement('img');
+    img.setAttribute('src', pbsUrl(id));
+    photo.appendChild(img);
+    row.appendChild(photo);
+  }
+  await settle(window);
+
+  assert.equal(article.querySelectorAll(BUTTON).length, 1, 'button appears once media exists');
+  assert.equal(article.getAttribute(MARKER), '');
 });
 
 // The recovery guarantee the drain's `isConnected` skip depends on.

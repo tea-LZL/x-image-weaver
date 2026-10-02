@@ -51,3 +51,67 @@ test('accepts a URL carrying userinfo, since hostname excludes it', () => {
 test('rejects a media-shaped path on a host hidden behind userinfo', () => {
   assert.equal(mediaIdFromUrl('https://user:secret@evil.com/media/abc123XYZ_-9'), null);
 });
+
+// --- mediaSourceFromUrl: the format half -----------------------------------------
+//
+// The format is not a convenience. X's CDN resolves an image's encoding from the
+// `format` query parameter, so a URL built from the id alone is a 404 -- verified
+// against the live CDN with a real media id, which is what this pair exists to
+// prevent from coming back.
+const { mediaSourceFromUrl } = loadCore();
+
+test('carries the format alongside the id', () => {
+  assert.deepEqual(
+    mediaSourceFromUrl('https://pbs.twimg.com/media/HTnhMtkbkAA6C-i?format=jpg&name=small'),
+    { id: 'HTnhMtkbkAA6C-i', format: 'jpg' },
+  );
+});
+
+test('reads the format regardless of parameter order', () => {
+  assert.deepEqual(
+    mediaSourceFromUrl('https://pbs.twimg.com/media/abc?name=orig&format=png'),
+    { id: 'abc', format: 'png' },
+  );
+});
+
+test('lowercases the format so a caller cannot build a URL from casing differences', () => {
+  assert.deepEqual(
+    mediaSourceFromUrl('https://pbs.twimg.com/media/abc?format=JPG'),
+    { id: 'abc', format: 'jpg' },
+  );
+});
+
+test('reports a missing format as null rather than guessing', () => {
+  assert.deepEqual(mediaSourceFromUrl('https://pbs.twimg.com/media/abc?name=orig'), {
+    id: 'abc',
+    format: null,
+  });
+});
+
+test('reports a format that is not extension-shaped as null', () => {
+  // The value comes off a page, so it is not trusted to be sane: a caller that
+  // used it verbatim would build a URL out of whatever was there.
+  assert.equal(mediaSourceFromUrl('https://pbs.twimg.com/media/abc?format=a/b').format, null);
+  assert.equal(mediaSourceFromUrl('https://pbs.twimg.com/media/abc?format=').format, null);
+  assert.equal(mediaSourceFromUrl('https://pbs.twimg.com/media/abc?format=image%2Fpng').format, null);
+});
+
+test('still rejects the wrong host and the wrong path, format or not', () => {
+  assert.equal(mediaSourceFromUrl('https://example.com/media/abc?format=jpg'), null);
+  assert.equal(mediaSourceFromUrl('https://pbs.twimg.com/media/abc/def?format=jpg'), null);
+  assert.equal(mediaSourceFromUrl('https://pbs.twimg.com/abc?format=jpg'), null);
+  assert.equal(mediaSourceFromUrl('not a url'), null);
+});
+
+test('mediaIdFromUrl is exactly the id half of mediaSourceFromUrl', () => {
+  // A view, not a second parser: if the two ever disagree, one of them is wrong.
+  for (const raw of [
+    'https://pbs.twimg.com/media/abc123XYZ_-9?format=jpg&name=medium',
+    'https://pbs.twimg.com/media/abc?name=orig',
+    'https://example.com/media/abc?format=jpg',
+    '',
+  ]) {
+    const source = mediaSourceFromUrl(raw);
+    assert.equal(mediaIdFromUrl(raw), source === null ? null : source.id, raw);
+  }
+});

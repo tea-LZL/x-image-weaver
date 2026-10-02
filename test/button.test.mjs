@@ -31,6 +31,15 @@ import { loadAll } from './harness.mjs';
 const BUTTON = 'button.xiw-merge-button';
 const ARIA_LABEL = 'Merge images into one';
 const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
+
+// What stitchVertical was handed, flattened to `id:format` per part.
+//
+// The format is half the contract now, not decoration: the media id alone does
+// not name a fetchable URL, and a source that lost its format would fail against
+// the real CDN while every id-only assertion here stayed green. Reading the pair
+// as one string keeps the assertions about the media rather than about object
+// internals, so a renamed field cannot silently stop being checked.
+const sawMedia = (calls) => calls.map((sources) => sources.map((s) => `${s.id}:${s.format}`));
 const originalConsoleError = console.error;
 
 // A fresh document and a fresh module instance per test: loadAll() resets XIW
@@ -243,6 +252,40 @@ test('a re-mount repairs a row a re-render stripped, without adding a second but
   assert.equal(row.getAttribute('data-xiw-row'), '', 'with the marker restored too');
 });
 
+// The same spot on every post, whatever layout X chose for it.
+//
+// X nests a 4-image gallery -- the grid holds rows and the rows hold the photos --
+// so the first photo's parentElement is one ROW of the gallery, not the gallery.
+// Anchoring there put the button at the top-right of the top row: halfway down
+// the media on a 4-image post and at the top of the media on a 2-image one. That
+// is the "button shows up in a different place" half of the inconsistency, and it
+// is invisible to every other test here because the fixture builds a flat row
+// where the first parent and the common ancestor are the same node.
+test('the button anchors to the whole media area, not to the first row of a nested grid', () => {
+  const t = setup({ photos: ['a', 'b', 'c', 'd'] });
+  const root = t.roots()[0];
+  const flatRow = t.row();
+
+  // Restructure into the nested shape X actually renders for four images.
+  const grid = t.document.createElement('div');
+  const top = t.document.createElement('div');
+  const bottom = t.document.createElement('div');
+  const photos = [...flatRow.querySelectorAll('[data-testid="tweetPhoto"]')];
+  top.append(photos[0], photos[1]);
+  bottom.append(photos[2], photos[3]);
+  grid.append(top, bottom);
+  flatRow.replaceWith(grid);
+
+  assert.equal(t.row(), top, 'the fixture is now nested: the first photo sits in one row');
+
+  t.XIW.button.mount(root);
+
+  const button = root.querySelector(BUTTON);
+  assert.ok(button, 'a button was placed');
+  assert.equal(button.parentElement, grid, 'anchored to the gallery, so the spot does not move');
+  assert.notEqual(button.parentElement, top, 'anchoring to the first row is the bug this pins');
+});
+
 // --- 3. it is a real button, and it is styled without X's help -----------------
 
 test('the control is a real labelled button with the required geometry', () => {
@@ -360,7 +403,11 @@ test('the click stitches the media that is there now, not the media at mount', a
   t.click(button);
   await t.settle();
 
-  assert.deepEqual(t.stitched, [['clickA', 'clickB', 'clickC']], 'exactly the media that was under the post when it was clicked');
+  assert.deepEqual(
+    sawMedia(t.stitched),
+    [['clickA:jpg', 'clickB:jpg', 'clickC:jpg']],
+    'exactly the media that was under the post when it was clicked, format included',
+  );
   assert.equal(t.XIW.collectPhotoIds(t.roots()[0])[0], 'clickA', 'and the mount-time ids are long gone from the page');
 });
 
@@ -422,7 +469,7 @@ test('the click still works for a keyboard user activating the button', async ()
   t.button().click();
   await t.settle();
 
-  assert.deepEqual(t.stitched, [['aa', 'bb']]);
+  assert.deepEqual(sawMedia(t.stitched), [['aa:jpg', 'bb:jpg']]);
   assert.equal(t.shown.length, 1, 'and the composite was handed to the overlay');
 });
 
@@ -495,7 +542,11 @@ test('the retry re-runs the same body, and it re-collects the media as well', as
   await retry();
 
   assert.equal(t.stitched.length, 2, 'a second attempt, from the same closure');
-  assert.deepEqual(t.stitched[1], ['aa', 'swapped'], 'and it re-collects the media rather than replaying the first answer');
+  assert.deepEqual(
+    sawMedia(t.stitched)[1],
+    ['aa:jpg', 'swapped:jpg'],
+    'and it re-collects the media rather than replaying the first answer',
+  );
   assert.equal(t.shownErrors.length, 2, 'a retry that fails again reports again');
   assert.equal(t.buttons()[0].hasAttribute('aria-disabled'), false, 'and the button is idle once more');
 });

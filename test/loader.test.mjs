@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { loadCore, loadAll, manifestScripts } from './harness.mjs';
 
@@ -44,6 +44,49 @@ test('content scripts are declared in dependency order', () => {
     'src/overlay.js',
     'src/main.js',
   ]);
+});
+
+// Every file the manifest names must exist, icons included.
+//
+// The script half of this was already true. The icon half was not, and the gap
+// bit: the icons were renamed from `16.png`/`48.png`/`128.png` to
+// `icon16.png`/`icon32.png`/`icon48.png`/`icon128.png`, and nothing in the suite
+// noticed the manifest was still pointing at the deleted names. Chrome refuses to
+// load an extension whose icons are missing, so the extension was broken until
+// someone opened chrome://extensions and read the error off the page.
+//
+// Read from the manifest rather than restated, and walk both the `icons` map and
+// the content scripts, so a rename on either side is caught here.
+test('every file the manifest references exists', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+
+  const referenced = [...manifestScripts(), ...Object.values(manifest.icons ?? {})];
+  assert.ok(referenced.length >= 6, 'the manifest should reference at least the content scripts');
+
+  const missing = referenced.filter((path) => !existsSync(new URL(`../${path}`, import.meta.url)));
+  assert.deepEqual(missing, [], `manifest references files that do not exist: ${missing.join(', ')}`);
+});
+
+// The sizes the manifest advertises must match the files' real dimensions. A 128
+// icon that is actually 16 loads without complaint and looks like a smudge in the
+// toolbar, which is a bug you can only see and not be told about.
+test('every declared icon is a PNG of the size it claims', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+
+  for (const [size, path] of Object.entries(manifest.icons ?? {})) {
+    const bytes = readFileSync(new URL(`../${path}`, import.meta.url));
+
+    // The PNG header: an 8-byte signature, then the IHDR chunk, whose first two
+    // 32-bit big-endian fields are the width and height. Reading them is more
+    // honest than trusting the filename.
+    assert.deepEqual(
+      [...bytes.subarray(0, 8)],
+      [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      `${path} is not a PNG`,
+    );
+    assert.equal(bytes.readUInt32BE(16), Number(size), `${path} width vs declared ${size}`);
+    assert.equal(bytes.readUInt32BE(20), Number(size), `${path} height vs declared ${size}`);
+  }
 });
 
 // The IIFE wrap has no automated detector anywhere else, and it is not a style

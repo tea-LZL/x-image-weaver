@@ -11,22 +11,27 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 // one becomes a property of it, so an unwrapped helper here is a name any later
 // script could clobber. The whole XIW namespace exists to keep this extension's
 // internals out of X's way and out of each other's; leaking six names back out
-// undoes it. Only the three exports below reach the namespace.
+// undoes it. Only the four exports below reach the namespace.
 //
 // Selectors are read per call, never resolved once at load: media is
 // re-collected at click time because React can swap a node's media after a
 // button was attached.
 (function () {
 
-  // root's own media IDs, in DOM order, or null when this is not a mergeable
-  // gallery. null is the common answer -- most posts on the timeline are not split
-  // galleries -- so it has to be cheap and quiet: a pure read, no logging, no
-  // throwing, no mutation of what it inspected.
+  // The root's own media, in DOM order, as `{ id, format }` pairs, or null when
+  // this is not a mergeable gallery. null is the common answer -- most posts on the
+  // timeline are not split galleries -- so it has to be cheap and quiet: a pure
+  // read, no logging, no throwing, no mutation of what it inspected.
+  //
+  // The format travels with the id because the id alone cannot build a fetchable
+  // URL: X's CDN needs `?format=<fmt>&name=orig`, and a URL missing the format is a
+  // 404 against the live CDN. `format` can be null if a URL omits it; stitch.js
+  // owns the default, so this file never guesses.
   //
   // Reads XIW.ownElements rather than a local copy of it, which is the whole
   // reason that is exported: the two callers that need to know which media a
   // root OWNS must not be able to disagree about it.
-  XIW.collectPhotoIds = function collectPhotoIds(root) {
+  XIW.collectPhotoSources = function collectPhotoSources(root) {
     if (!isQueryable(root)) return null;
 
     // Mixed media is not a split gallery. Refuse the whole post rather than
@@ -36,17 +41,28 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
     if (photos.length < 2) return null;
 
-    var ids = [];
+    var sources = [];
     for (var i = 0; i < photos.length; i++) {
-      var id = XIW.mediaIdFromUrl(photoSourceUrl(photos[i]));
+      var source = XIW.mediaSourceFromUrl(photoSourceUrl(photos[i]));
       // One unreadable photo makes the whole post unreadable: stitching a subset
       // of a split gallery yields a plausible-looking wrong image, which is worse
       // than offering no button at all.
-      if (!id) return null;
+      if (!source) return null;
       // Pushed, never deduplicated. X permits the same image twice in one
       // gallery, and a Set would silently drop a tile.
-      ids.push(id);
+      sources.push(source);
     }
+    return sources;
+  };
+
+  // The ids alone, for callers that only need to know WHICH media a post holds --
+  // deciding whether it is mergeable, or reading a post back in a test. A view of
+  // collectPhotoSources, not a second implementation, so the two cannot disagree.
+  XIW.collectPhotoIds = function collectPhotoIds(root) {
+    var sources = XIW.collectPhotoSources(root);
+    if (sources === null) return null;
+    var ids = [];
+    for (var i = 0; i < sources.length; i++) ids.push(sources[i].id);
     return ids;
   };
 

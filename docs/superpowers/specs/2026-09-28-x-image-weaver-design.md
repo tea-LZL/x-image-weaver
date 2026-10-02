@@ -82,11 +82,11 @@ no file imports another.
 
 ### Public interfaces
 
-- `core.js` → `XIW.SELECTORS`, `XIW.TUNABLES`, `XIW.mediaIdFromUrl(url)`, `XIW.computeCanvasSize(tiles)`
-- `dom.js` → `XIW.collectPhotoIds(root)`, `XIW.tweetMeta(root)`
-- `stitch.js` → `XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`
+- `core.js` → `XIW.SELECTORS`, `XIW.TUNABLES`, `XIW.mediaSourceFromUrl(url)`, `XIW.mediaIdFromUrl(url)`, `XIW.computeCanvasSize(tiles)`
+- `dom.js` → `XIW.collectPhotoSources(root)`, `XIW.collectPhotoIds(root)`, `XIW.ownElements(root, selector)`, `XIW.tweetMeta(root)`
+- `stitch.js` → `XIW.stitchVertical(sources) → Promise<{ blob, format }>`
 - `overlay.js` → `XIW.overlay.show(blob, meta)`, `XIW.overlay.hide()`
-- `button.js` → `XIW.button.mount(root)`
+- `button.js` → `XIW.button.mount(root) → boolean`
 - `main.js` → bootstraps the observer; no exports
 
 The load-bearing seam: `stitch.js` never reads or mutates the page's DOM and `dom.js` never
@@ -116,10 +116,16 @@ and `@handle` concatenated in that one element, so `textContent` yields `AdaLove
 The href must additionally be a bare profile path (`^\/[A-Za-z0-9_]{1,15}$` — X's handle
 grammar) so the `/status/` permalink and `/i/user/` routes are not mistaken for it.
 
-### `collectPhotoIds(root) → string[] | null`
+### `collectPhotoSources(root) → Array<{id, format}> | null`
 
-Returns X's media IDs for the root's own attachments in DOM order, or `null` when the post
-is not a mergeable gallery. Pure read; no side effects.
+Returns X's media for the root's own attachments in DOM order, or `null` when the post is not
+a mergeable gallery. Pure read; no side effects. `collectPhotoIds` is a view of this that
+keeps only the ids, so the two cannot disagree.
+
+**The format travels with the id because the id alone is not a fetchable resource.** X's CDN
+resolves an image's encoding from the `format` query parameter; `?name=orig` without one is a
+404. X's markup always spells the format out — the thumbnail it renders is itself
+`?format=jpg&name=small` — so it is read off the same URL as the id.
 
 1. Collect `[data-testid="tweetPhoto"]` descendants, then **discard any with a
    `[data-testid="quoteTweet"]` ancestor**. This attributes a quoted tweet's media to the
@@ -131,8 +137,9 @@ is not a mergeable gallery. Pure read; no side effects.
    `img.currentSrc` → `img.src` → any descendant's `style.backgroundImage`.
    The background fallback matters because X populates it eagerly, so a lazy-loaded
    timeline image still yields a usable media ID.
-5. Parse each URL with `mediaIdFromUrl`, which requires hostname `pbs.twimg.com` and a
-   pathname of exactly `/media/<id>`. **If any photo fails to yield an ID, return `null` for
+5. Parse each URL with `mediaSourceFromUrl`, which requires hostname `pbs.twimg.com` and a
+   pathname of exactly `/media/<id>`, and returns `{ id, format }` with `format` null when the
+   URL does not carry a usable one. **If any photo fails to yield a source, return `null` for
    the entire post.**
 6. **Preserve duplicates.** X permits the same image more than once in a gallery;
    de-duplicating would corrupt the stack.
@@ -144,18 +151,41 @@ nodes into a `Set`, and drains it on the next animation frame. Roots are both
 `article[data-testid="tweet"]` and `div[data-testid="quoteTweet"]` — quoted tweets are not
 reliably `article` elements.
 
-Idempotency uses a `data-xiw-done` attribute on the root. A `WeakSet` would be incorrect
-here: React reuses and re-parents DOM nodes, so identity of the element is not stable, but
-the attribute survives a re-render.
+Idempotency uses a `data-xiw-done` attribute on the root, **written only when a button
+actually landed**. A `WeakSet` would be incorrect here: React reuses and re-parents DOM nodes,
+so identity of the element is not stable, but the attribute survives a re-render.
+
+Writing it only on success is not a detail — it is what makes discovery correct. React fills a
+tweet's media in across more than one commit, so a root is routinely observed while it has zero
+or one photo, and at that moment "this is a single-image post" and "this post's media has not
+rendered yet" are the same observation. Marking both as done means the second kind is never
+looked at again, because the commit that adds its media is a `childList` change *inside* an
+already-marked root. The cost of the correction is that a genuinely non-mergeable post stays
+eligible and is re-examined when something inside it changes; that is bounded by the pending
+`Set` (once per frame per root).
+
+A root that throws is the one case marked anyway: a fault is not "not yet", and an unmarked
+faulting root would be re-attempted on every later mutation of that post, logging each time.
+
+**A mutation is resolved to the nearest enclosing root, not to the added node.** A tweet's
+images arrive in a commit after the article does, and that commit adds a node deep inside a
+root, where scanning the node and its descendants finds no root at all. Walking up to the
+enclosing root first is what re-examines the post whose media just appeared.
 
 **Media IDs are re-collected at click time, not at injection time.** This is cheap and
 removes the risk of React swapping a node's media after the button was attached.
 
 ### Button placement
 
-The button is appended to the media *row* (the shared parent of the photo containers), not
-inside a photo container. X sets `overflow: hidden` on `tweetPhoto` to perform cropping, so
-a button placed inside it would be clipped. The row is given inline `position: relative`;
+The button is appended to the **deepest common ancestor of the post's own photo containers**,
+not inside a photo container. X sets `overflow: hidden` on `tweetPhoto` to perform cropping, so
+a button placed inside it would be clipped.
+
+The common ancestor, rather than the first photo's `parentElement`, is what keeps the button in
+the same spot on every post. X nests a 4-image gallery — the grid holds rows and the rows hold
+the photos — so the first photo's parent is one *row* of the gallery, and anchoring there puts
+the button at the top-right of the top row: halfway down the media on a 4-image post and at the
+top of it on a 2-image one. The row is given inline `position: relative`;
 the button sits top-right, `opacity: 0`, revealing on row hover or `focus-within`.
 
 It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard
@@ -174,10 +204,11 @@ Defined once in `core.js` as `XIW.TUNABLES`:
 
 ## Stitch pipeline
 
-`XIW.stitchVertical(mediaIds) → Promise<{ blob, format }>`. No page-DOM access.
+`XIW.stitchVertical(sources) → Promise<{ blob, format }>`. No page-DOM access.
 
-1. Build `https://pbs.twimg.com/media/<id>?name=orig` for each ID — full resolution,
-   original format.
+1. Build `https://pbs.twimg.com/media/<id>?format=<fmt>&name=orig` for each source — full
+   resolution, original format. A source with no usable format falls back to `jpg`; the id
+   alone is not a fetchable URL.
 2. Fetch all in parallel with `TUNABLES.FETCH_TIMEOUT_MS` per image and
    `cache: 'force-cache'`.
 3. Decode with `createImageBitmap(blob)`, falling back to `new Image()` + `decode()`.
@@ -361,6 +392,6 @@ cannot tell you whether a control is covering the image.
 | Image 404 / 403 / timeout | Overlay error state naming `NETWORK`, with Retry. |
 | Composite exceeds canvas height or area cap | Silent uniform downscale, logged to the console. |
 | `toBlob` returns `null` (allocation failure) | Retry once as JPEG at quality 0.95; caller notes the format change. |
-| React re-parents a node or swaps its media | IDs re-collected at click time; `data-xiw-done` marker keeps injection idempotent. |
+| React re-parents a node or swaps its media | Sources re-collected at click time; the `data-xiw-done` marker is written only when a button actually landed, so a half-rendered post stays eligible. |
 | X's `overflow: hidden` crops the button | Button is a child of the media row, never of a photo container. |
 | Duplicate X media IDs in one post | Preserved, not de-duplicated. |

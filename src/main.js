@@ -109,19 +109,48 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // that brings it back is a later mutation touching the same subtree, which for
   // a post already scrolled past may never come.
   //
-  // mountOnce's own protection is the mark-before-mount ordering, which stops a
-  // throwing root being retried forever. This is the sibling case, which that
-  // ordering does not reach.
+  // The marker is written only when a button actually landed, and that is the
+  // difference between a working feed and an intermittent one. React fills a
+  // tweet's media in across more than one commit, so a root is routinely observed
+  // while it has zero or one photo -- and a post whose media has not rendered yet
+  // is indistinguishable from a post that is not a gallery. Marking both as done
+  // means the first kind is never examined again: the root is already marked, and
+  // the commit that adds its media is a childList change *inside* it, which only
+  // re-scans the added node and finds no root. Leaving it unmarked keeps it
+  // eligible for the next look. That is also why the enqueue below re-examines a
+  // root when something lands inside it.
+  //
+  // A root that throws is marked anyway. That is the one case where retrying is
+  // wrong: a fault is not "not yet", and an unmarked faulting root would be
+  // re-attempted on every later mutation of that post, logging each time. Marking
+  // it fails toward "this post has no button", which the user can see and recover
+  // from by reloading.
+  //
+  // No UI surface exists for "this post could not be decorated", so the console is
+  // the only honest one. Swallowing it would leave a post with no button and no
+  // record of why -- and a silent failure is the failure mode this whole file is
+  // written against.
   function mountGuarded(root) {
+    // `!== undefined`, and not a truthiness test. The marker is written as the
+    // empty string, which is the DOM convention for a valueless flag, so a
+    // truthiness check reads it as absent on every root and examines every post
+    // on every scan. That failure is quieter than it looks -- mount() is itself
+    // idempotent, so no second button appears and the timeline looks correct --
+    // but it throws away this file's entire cost bound, re-running the
+    // mergeability read and its two getComputedStyle reads per post per frame,
+    // for nothing.
+    if (root.dataset.xiwDone !== undefined) return;
+
+    var mounted = false;
     try {
-      mountOnce(root);
+      mounted = XIW.button.mount(root) === true;
     } catch (err) {
-      // No UI surface exists for "this post could not be decorated", so the
-      // console is the only honest one. Swallowing it would leave a post with no
-      // button and no record of why -- and a silent failure is the failure mode
-      // this whole file is written against.
+      root.dataset.xiwDone = '';
       console.error('[x-image-weaver] could not decorate a post', err);
+      return;
     }
+
+    if (mounted) root.dataset.xiwDone = '';
   }
 
   // Duck-typed, never `instanceof Element`, and for the reason dom.js documents:
@@ -131,33 +160,6 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // mutation X commits that inserts text, and it has neither method.
   function isQueryable(node) {
     return Boolean(node) && typeof node.querySelectorAll === 'function' && typeof node.matches === 'function';
-  }
-
-  /**
-   * @function mountOnce
-   * @param {Element} root A tweet root.
-   * @returns {void}
-   * @description Marks the root and mounts it, unless the marker is already there.
-   *
-   * The marker is written BEFORE mount(), and that ordering is deliberate. mount()
-   * is this extension's own code and is not expected to throw, but if it ever
-   * did, a root that was marked afterwards would be retried by the next mutation
-   * touching it -- and retried in a loop, on a post the user is looking at.
-   * Marked-first fails toward "this post has no button", which is the failure
-   * mode the user can see and recover from by reloading.
-   */
-  function mountOnce(root) {
-    // `!== undefined`, and not a truthiness test. The marker is written as the
-    // empty string, which is the DOM convention for a valueless flag, so a
-    // truthiness check reads it as absent on every root and re-mounts on every
-    // scan. That failure is quieter than it looks: mount() is itself idempotent,
-    // so no second button appears and the timeline looks correct. What is lost
-    // is this file's entire cost bound -- a full scan of every node X added,
-    // each paying mount()'s writes and its two getComputedStyle reads -- for
-    // nothing.
-    if (root.dataset.xiwDone !== undefined) return;
-    root.dataset.xiwDone = '';
-    XIW.button.mount(root);
   }
 
   // One frame, not one mutation. A drain empties the whole queue and clears it
@@ -185,6 +187,31 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     }
   }
 
+  // Decide what a mutation should make us look at, and it is usually a post rather
+  // than the node that changed.
+  //
+  // The obvious rule -- enqueue the added node, scan it and its descendants -- is
+  // what missed late media. A tweet's images arrive in a commit *after* the
+  // article does, and that commit adds a node deep inside a root, where scanning
+  // the node and its descendants finds no root at all; the root that needs
+  // re-examining is upwards. So walk up to the nearest enclosing root first and
+  // queue that. A media commit inside a post then re-examines exactly that post.
+  //
+  // The cost bound is the Set plus the marker: a root is re-examined once per
+  // frame no matter how many of its descendants changed, and an already-mounted
+  // root costs one dataset read. The posts that get re-examined for real are the
+  // ones with no button, which is the work that has to happen anyway -- a post
+  // that is not a gallery stays unmarked on purpose, because "not a gallery" and
+  // "media has not rendered yet" are indistinguishable at the moment we look.
+  //
+  // A node that is not inside any root still gets queued as itself: it may BE a
+  // root, or contain several, which is how a whole new post is discovered.
+  function enqueue(node) {
+    if (!isQueryable(node)) return;
+    var ancestorRoot = node.closest(rootSelector());
+    pending.add(ancestorRoot === null ? node : ancestorRoot);
+  }
+
   // The observer callback. Collects, then schedules -- never scans inline. A scan
   // inside this callback would run per commit, and X commits a lot; every root
   // mount here writes to the DOM, which means scanning inline also mutates the
@@ -192,7 +219,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   function collect(records) {
     for (var i = 0; i < records.length; i++) {
       var added = records[i].addedNodes;
-      for (var j = 0; j < added.length; j++) pending.add(added[j]);
+      for (var j = 0; j < added.length; j++) enqueue(added[j]);
     }
     scheduleDrain();
   }
