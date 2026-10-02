@@ -241,6 +241,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   var filename = '';
   var onRetry = null;
   var savedOverflow = null;
+  var savedScroll = null;
   var previousFocus = null;
 
   // The three exports are declared here rather than written as
@@ -253,7 +254,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   /**
    * @function XIW.overlay.show
    * @param {{blob: Blob, format: string, meta: {tweetId: string, handle: string}}} options
-   *   `blob` and `format` are the `{blob, format}` pair `XIW.stitchVertical`
+   *   `blob` and `format` are the `{blob, format}` pair `XIW.stitchImages`
    *   resolved with, and `meta` is `XIW.tweetMeta`'s result for the post.
    * @returns {void}
    * @description Opens the overlay on the composite, or replaces what is already
@@ -295,7 +296,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 
   /**
    * @function XIW.overlay.showError
-   * @param {XIW.StitchError} err The error `XIW.stitchVertical` threw.
+   * @param {XIW.StitchError} err The error `XIW.stitchImages` threw.
    * @param {function(): void} onRetryCallback Called from the Retry click handler
    *   and from nowhere else, which is what keeps the user gesture that the
    *   caller's work has to be started from attached to that work.
@@ -357,10 +358,26 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // Back where the user was -- the Merge button, normally. Guarded because the
     // page under the overlay is a live React tree and the element that was
     // focused on open may not exist any more.
+    //
+    // preventScroll, because focusing an element scrolls it into view by default
+    // and that would fight the offset restored just below. The reader's position is
+    // restored deliberately, once, and focus does not get a vote.
     if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === 'function') {
-      previousFocus.focus();
+      try {
+        previousFocus.focus({ preventScroll: true });
+      } catch {
+        // Older engines ignore the options object rather than rejecting it, so
+        // reaching this is unlikely -- but a focus that throws must not cost the
+        // reader their place, and the restore below is the part that matters.
+        previousFocus.focus();
+      }
     }
     previousFocus = null;
+
+    // After focus, so nothing can scroll the page again afterwards. A no-op when
+    // the offset never moved, which is every case where the viewport was not the
+    // scroller to begin with.
+    restoreScroll();
 
     releaseUrl();
     // After the revoke: a revoked URL left on an <img> is a broken-image element,
@@ -393,6 +410,12 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     if (!host.isConnected) document.body.appendChild(host);
     isOpen = true;
 
+    // Read before the lock, and that ordering is the whole point. Locking sets
+    // `body { overflow: hidden }`, which CSS propagates to the viewport when html's
+    // overflow is visible -- so the viewport stops being scrollable and the browser
+    // clamps its offset to 0. Reading after the lock would save a zero and closing
+    // would send the reader to the top of the timeline, which is the bug.
+    savedScroll = readScroll();
     savedOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     previousFocus = document.activeElement;
@@ -402,6 +425,36 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // it arrived. The event crosses the shadow boundary on its way, so this one
     // listener covers the whole overlay including the image.
     document.addEventListener('keydown', onKeyDown, true);
+  }
+
+  // The element that actually scrolls this document.
+  //
+  // scrollingElement is the correct answer and the only one that accounts for
+  // quirks mode, but it is not universally present -- jsdom does not implement it
+  // at all -- so the chain degrades to the two elements a browser would pick
+  // between. Returning null rather than guessing keeps a document we cannot measure
+  // from throwing on a property write.
+  function scrollRoot() {
+    return document.scrollingElement || document.documentElement || document.body || null;
+  }
+
+  function readScroll() {
+    var root = scrollRoot();
+    if (!root) return null;
+    return { top: root.scrollTop || 0, left: root.scrollLeft || 0 };
+  }
+
+  function restoreScroll() {
+    if (savedScroll === null) return;
+    var target = savedScroll;
+    // Cleared before the write, so a second hide() cannot re-apply a stale offset
+    // over scrolling the reader has done since closing -- the same reason the
+    // overflow restore clears its own saved value.
+    savedScroll = null;
+    var root = scrollRoot();
+    if (!root) return;
+    root.scrollTop = target.top;
+    root.scrollLeft = target.left;
   }
 
   function onKeyDown(event) {
@@ -571,7 +624,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 
     view.download = element('button', 'control control--primary download');
     view.download.type = 'button';
-    // Not "Download PNG": the composite is a JPEG whenever stitchVertical had to
+    // Not "Download PNG": the composite is a JPEG whenever stitchImages had to
     // fall back, and the label would then be false. The extension's filename
     // extension already says which encoding the user is getting.
     view.download.textContent = 'Download';

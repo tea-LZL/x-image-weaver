@@ -174,6 +174,70 @@ test('a later show() revokes what the error was covering', () => {
   assert.equal(t.control('panel').hidden, true, 'and the error panel is gone');
 });
 
+// Closing the overlay must leave the reader where they were.
+//
+// `open()` sets `body { overflow: hidden }`, and CSS propagates a body overflow to
+// the viewport when html's is visible -- so the viewport stops being scrollable and
+// the browser clamps its scroll offset to 0. Restoring `overflow` on close does not
+// bring the offset back, which is why a merge used to drop the reader at the top of
+// the timeline, several screens from the post they were reading.
+//
+// jsdom has no layout engine, so it does not perform that clamp. The clamp is
+// therefore simulated here -- scroll offset zeroed between show and hide -- because
+// the contract under test is that hide() puts the reader back regardless of what the
+// browser did to the offset while the overlay was up. Without the fix this asserts
+// 0 === 420 and fails.
+test('closing the overlay restores the scroll offset the reader had', () => {
+  const t = setup();
+  const scroller = t.document.scrollingElement || t.document.documentElement;
+
+  scroller.scrollTop = 420;
+  scroller.scrollLeft = 7;
+
+  t.show();
+  // What the browser does when the viewport stops being scrollable.
+  scroller.scrollTop = 0;
+  scroller.scrollLeft = 0;
+
+  t.XIW.overlay.hide();
+
+  assert.equal(scroller.scrollTop, 420, 'back to the post, not the top of the timeline');
+  assert.equal(scroller.scrollLeft, 7);
+});
+
+// The complement: a second hide() must not re-apply a stale offset over scrolling
+// the reader has done since. Same shape as the overflow double-restore guard.
+test('a second close does not move the reader again', () => {
+  const t = setup();
+  const scroller = t.document.scrollingElement || t.document.documentElement;
+
+  scroller.scrollTop = 420;
+  t.show();
+  t.XIW.overlay.hide();
+  assert.equal(scroller.scrollTop, 420);
+
+  // The reader scrolls somewhere else after closing.
+  scroller.scrollTop = 900;
+  t.XIW.overlay.hide();
+  assert.equal(scroller.scrollTop, 900, 'a stale offset was re-applied');
+});
+
+// Opening must not move the reader either. Capturing the offset is a read; if it
+// were taken after the lock, or the lock were applied before the read, the value
+// saved would be the clamped zero and closing would send them to the top.
+test('opening the overlay records the offset before the scroll lock', () => {
+  const t = setup();
+  const scroller = t.document.scrollingElement || t.document.documentElement;
+
+  scroller.scrollTop = 1234;
+  t.show();
+  // Simulate the clamp happening at lock time, then confirm the SAVED value was
+  // the pre-lock one by closing and checking where we land.
+  scroller.scrollTop = 0;
+  t.XIW.overlay.hide();
+  assert.equal(scroller.scrollTop, 1234);
+});
+
 // --- 4. body overflow is saved on open and restored on close, once --------------
 
 test('an inline overflow on body is restored exactly, not clobbered with hidden', () => {
