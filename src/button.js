@@ -8,10 +8,12 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 // implements it, and each one is a way the extension fails silently -- the user
 // sees a normal-looking X timeline and no reason to suspect otherwise.
 //
-//   1. The button is a child of the media ROW, never of a photo container. X
-//      sets `overflow: hidden` on [data-testid="tweetPhoto"] to crop the media
-//      to the grid cell, so a button appended inside one is clipped out of
-//      existence on every post, with nothing on screen to debug.
+//   1. The button is never a child of a photo container, and in a feed it is not
+//      a child of the gallery either. X sets `overflow: hidden` on
+//      [data-testid="tweetPhoto"] and on the box around the gallery, so a button
+//      inside either is clipped, and one that overflows that box lands on top of
+//      the timestamp. The feed control is a child of the post. The status-page
+//      bar is the previous sibling of the timestamp row, outside the gallery.
 //   2. Media IDs are collected again at CLICK time. The mount-time answer is
 //      used only to decide whether to put a button there at all. React re-uses
 //      and re-parents DOM nodes, so the media under a root at click time is not
@@ -57,7 +59,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   var COUNT_CLASS = 'xiw-merge-count';
   var ICON_CLASS = 'xiw-merge-icon';
   var LABEL_CLASS = 'xiw-merge-label';
-  var OVERLAY_CLASS = 'xiw-merge-overlay';
+  var GUTTER_CLASS = 'xiw-merge-gutter';
+  var DOTS_CLASS = 'xiw-merge-dots';
+  var DOT_CLASS = 'xiw-merge-dot';
   var ICON_ONLY_CLASS = 'xiw-merge-button--icon';
   var BUTTON_CLASS = 'xiw-merge-button';
   var BUSY_CLASS = 'xiw-merge-button--busy';
@@ -75,12 +79,20 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // each of our elements because X's global stylesheet reaches every element on the
   // page and would otherwise set their size, font and colour.
   //
-  // There is no absolute positioning, no z-index and no hover reveal here, and that
-  // is the point of the shape rather than an omission. The control is in the normal
-  // flow below the media, like the one TapToSee draws, so it cannot cover the
-  // composite, cannot need a stacking context on X's own row, and does not have to
-  // be invisible until hovered -- an always-visible control that is not on top of
-  // anything is not visual noise.
+  // Two shapes, and the difference is where each one is allowed to paint.
+  //
+  // On a post's own page the control is in normal flow, on its own line under the
+  // media and above the timestamp. It used to share that line. Two different
+  // mistakes put it there: inserting it inside the box X sizes to the pictures
+  // (that box does not grow, so the pill overflows onto the views), and a
+  // flex-basis of 100%, which in the column a post is laid out in is a height, so
+  // the bar stretched over the time. The z-index that exists so the card link
+  // cannot swallow the click then swallows the views link instead.
+  //
+  // In a feed there is no line to give it. The control sits in the gutter to the
+  // left of the images — the avatar column, vertically centred on the media — the
+  // way TapToSee draws it. It is not on the picture. A mark on the picture covers
+  // the art and, on a pale or busy image, disappears into it.
   //
   // Flushed left on purpose -- it is a string, not code, and indenting it under the
   // IIFE only makes every selector harder to read.
@@ -100,14 +112,24 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   align-items: center;
   justify-content: center;
   gap: 12px;
-  /* Its own line under the media. The parent may be a flex row or a grid and a
-     bare block child of either would be laid out beside the media instead of
-     under it, which is how the bar came to overlap the timestamp and views. */
-  flex: 0 0 100%;
+  /* Its own line under the media, and only as tall as the pill.
+     flex-basis 100% was the overlap: in a row it is a width, but in the column
+     X lays a post out in it is a height, so the bar grew to the post and the pill
+     landed on the timestamp. auto is the content height in a column and, with
+     width 100%, still a full-width line in a row. grid-column is the same request
+     made of a grid parent. Empty parts of the line pass clicks through, so a bar
+     that still shares a pixel with the view count does not take the click. */
+  flex: 0 0 auto;
+  align-self: stretch;
   width: 100%;
   max-width: 100%;
+  height: auto;
   grid-column: 1 / -1;
-  padding: 10px 0 4px;
+  clear: both;
+  pointer-events: none;
+  /* A line of its own, with a gap the size of the pill both above it and before
+     the timestamp. 10px over 4px still read as the pill sitting on the time. */
+  padding: 28px 0 28px;
   font: 400 15px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -133,6 +155,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   color: #ffffff;
   font: 700 15px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   cursor: pointer;
+  pointer-events: auto;
   user-select: none;
   white-space: nowrap;
 }
@@ -148,46 +171,84 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   outline-offset: 2px;
 }
 
-/* The timeline control. The reference puts a compact icon on the media there and
-   the labelled pill only on a post's own page, where there is room under the
-   images for it. So this variant is the button with its label hidden, over the
-   media, and the card never grows a bar of its own. */
-.${OVERLAY_CLASS} {
+/* The timeline control. A labelled pill under every card would change the shape of
+   the feed, and a mark on the picture covers the art. TapToSee puts a small icon
+   in the gutter to the left of the images, centred on the avatar column and on the
+   media's vertical middle, with one dot per image underneath. The left and top are
+   written inline, because they are measured from the post; this rule only owns the
+   box. Absolute against the post, which is positioned for exactly this, so X's
+   overflow:hidden on the gallery cannot clip it. pointer-events stay off the box
+   and on the button, so the gutter does not steal clicks from the avatar column. */
+.${GUTTER_CLASS} {
   all: initial;
   box-sizing: border-box;
-  /* To the left of the images and vertically centred, which is where the reference
-     puts it. Absolute so it does not disturb the media's own layout -- X's grid
-     owns that -- and relative to the media block, whose position is asserted below
-     so this anchors to the images rather than to whatever ancestor X left
-     positioned. */
   position: absolute;
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  /* Above the media's own contents, and above X's stretched card link, which is an
-     absolutely positioned overlay over the whole tweet and would otherwise swallow
-     the click: a control that cannot be clicked is the failure this number exists
-     to prevent. */
   z-index: 2;
+  display: block;
+  width: 34.75px;
+  height: 34.75px;
+  pointer-events: none;
+}
+
+.${DOTS_CLASS} {
+  all: initial;
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
   display: flex;
-  /* The media block is the containing block, not a clipping context. */
-  max-width: 100%;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.${DOT_CLASS} {
+  all: initial;
+  display: block;
+  box-sizing: border-box;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: rgb(113, 118, 123);
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
-  padding: 8px;
+  width: 34.75px;
+  height: 34.75px;
+  padding: 0;
   border-radius: 9999px;
-  /* A disc rather than a bare glyph. The bare version reads as a missing control
-     against pale artwork and against a busy image, which is the report that
-     produced this rule; a translucent disc has contrast against anything, and the
-     glyph keeps its drop shadow on top of it. */
-  background-color: rgba(0, 0, 0, 0.6);
-  color: #ffffff;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+  /* X's own action-button colour, not a disc. The disc read as a sticker on the
+     art; this reads as another of the post's controls, and the hover is the same
+     blue wash X uses on reply and repost. */
+  background-color: transparent;
+  color: rgb(113, 118, 123);
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS}:hover {
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+/* X's gray action colour disappears on a black timeline, and the blue hover wash
+   is only a tenth of blue, so it stays faint there too. A dark page gets a white
+   icon on a visible disc, and hover brightens that disc instead of tinting it. */
+html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
+  color: rgb(255, 255, 255);
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}:hover {
+  color: rgb(255, 255, 255);
+  background-color: rgba(255, 255, 255, 0.42);
+}
+
+html[data-xiw-theme="dark"] .${DOT_CLASS} {
+  background-color: rgb(255, 255, 255);
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${ICON_CLASS} {
+  width: 18.75px;
+  height: 18.75px;
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${LABEL_CLASS} {
@@ -213,6 +274,36 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   pointer-events: none;
   cursor: progress;
   opacity: 0.75;
+}
+
+/* The timeline control has no visible label, so "Merging..." never shows. The
+   icon spins, and the disc brightens, for as long as the merge runs. Reduced
+   motion keeps the brighter disc and skips the spin. */
+@keyframes xiw-merge-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
+  opacity: 1;
+  background-color: rgba(29, 155, 240, 0.22);
+  color: rgb(29, 155, 240);
+}
+
+html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
+  background-color: rgba(255, 255, 255, 0.55);
+  color: rgb(255, 255, 255);
+}
+
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS} {
+  animation: xiw-merge-spin 0.7s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS} {
+    animation: none;
+  }
 }
 
 .${ICON_CLASS} {
@@ -264,8 +355,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     if (XIW.collectPhotoSources(root) === null) return false;
 
     // The media block: the deepest node that holds ALL of the post's own photos.
-    // The control goes immediately after it, so it sits under the images and above
-    // the timestamp -- the position TapToSee uses.
+    // On a post's own page the bar goes immediately before the timestamp row, so
+    // it sits under the images and above the time. In a feed the gutter control
+    // is measured against this block and anchored to the post, not placed inside it.
     //
     // Not the first photo's parentElement, which is what this used to do: X nests a
     // 4-image gallery, so the first photo's parent is one row of the grid rather
@@ -282,6 +374,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     var doc = root.ownerDocument;
 
     ensureStyles(doc);
+    noteTheme(doc);
 
     // Own-elements, for the same reason the photos are: an outer post quoting a
     // mergeable post has the quoted post's control somewhere in its subtree, and
@@ -292,8 +385,8 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 
     // The control has two shapes and the context decides which. On a post's own
     // page there is room under the images for a labelled pill beside an image
-    // count; in a feed there is not, so the reference puts a compact icon on the
-    // media instead. Same button, same behaviour, different furniture.
+    // count. In a feed the reference puts a compact icon in the gutter left of
+    // the images. Same button, same behaviour, different furniture.
     var onPostPage = isPostDetail(root);
 
     var button = doc.createElement('button');
@@ -301,7 +394,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     button.setAttribute('aria-label', ARIA_LABEL);
     button.setAttribute('data-xiw-button', '');
     button.className = onPostPage ? BUTTON_CLASS : BUTTON_CLASS + ' ' + ICON_ONLY_CLASS;
-    button.appendChild(icon(doc, onPostPage ? SPLIT_MARK : SPARKLE_MARK));
+    button.appendChild(icon(doc, onPostPage ? SPLIT_MARK : FRAME_MARK));
 
     // A span rather than a bare text node, so the icon-only variant can hide the
     // words without touching the icon, and so busy/idle rewrites exactly one node.
@@ -325,22 +418,27 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       control.appendChild(count);
       control.appendChild(button);
 
-      // After the media, so the post reads media -> control -> timestamp. When the
-      // media block IS the root -- photos as direct children of the article, which
-      // X does not do but which no rule here should turn into an insertion outside
-      // the post -- appending inside the root is the safe direction to fail.
-      if (media !== root && media.parentElement) {
-        media.parentElement.insertBefore(control, media.nextSibling);
-      } else {
-        root.appendChild(control);
-      }
+      // Before the timestamp row, so the post reads media, then the bar, then the
+      // time and the views. The gallery's box is only as tall as the pictures;
+      // a bar inside it overflows onto that row.
+      attachBar(root, media, control);
     } else {
-      control.className = OVERLAY_CLASS;
+      control.className = GUTTER_CLASS;
       control.appendChild(button);
-      // Inside the media block, so it tracks the images wherever the card puts
-      // them, and so the reveal on hover is not needed to find it.
-      positionMedia(media);
-      media.appendChild(control);
+      control.appendChild(imageDots(doc, photos.length));
+      // On the post, not in the gallery. The gallery is overflow:hidden, which is
+      // what clips a control that hangs off the left of the pictures, and it is
+      // also what made a control inside it cover the art.
+      //
+      // The host is the innermost article that owns this media, not always the
+      // root we were handed. A quote wrapper and the quoted article are two roots
+      // for one gallery. A control on the wrapper sits outside the article, so
+      // the article cannot see it and grows a second button. The article contains
+      // the media both of them own, so one control there is found by both.
+      var host = gutterHost(root, media);
+      ensurePositioned(host);
+      host.appendChild(control);
+      watchGutter(host, control);
     }
 
     // Per-button, not per-page: two posts can be stitched at once, and each
@@ -494,28 +592,294 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     return XIW.tweetMeta(root).tweetId === onPost[1];
   }
 
-  // `position: relative` on the media block, so the overlay control's absolute
-  // positioning means "top-right of the media" rather than "top-right of whatever
-  // ancestor X happened to position". Written only when the block has no position
-  // of its own, so X's own layout is left alone wherever it already says something.
+  // Where the status-page bar is inserted: the line immediately before the
+  // post's own timestamp, in the same column as that row.
   //
-  // This is the one place the extension writes a layout property onto an element it
-  // did not create, and it is why the overlay variant carries a z-index of its own:
-  // a positioned element with z-index: auto is not a stacking context, so without
-  // one the control's number would be compared against every z-index on the page.
-  function positionMedia(media) {
-    var view = media.ownerDocument && media.ownerDocument.defaultView;
-    if (!view || typeof view.getComputedStyle !== 'function') {
-      media.style.position = 'relative';
+  // Putting it after the gallery instead is what still laid the pill on the
+  // views. X wraps the pictures in a box sized to them. That box is not always
+  // absolute or overflow-hidden, so it is not always recognisable as chrome, and
+  // a bar inserted inside it does not make the post taller. It overflows onto
+  // the timestamp, and the z-index that clears the card link then takes the
+  // clicks that belonged to the time and the view count.
+  //
+  // The timestamp row is already outside that box. The bar goes in front of the
+  // row, which keeps the time and the views together and pushes both down.
+  // There is no timestamp yet on a half-rendered post; the action bar is the
+  // same kind of row and sits in the same place. With neither, the bar falls
+  // back to the first node outside the box that crops the gallery.
+  function attachBar(root, media, control) {
+    var before = metaRow(root, media);
+    if (before && before.parentElement) {
+      before.parentElement.insertBefore(control, before);
       return;
     }
-    var position = '';
-    try {
-      position = view.getComputedStyle(media).position || '';
-    } catch {
-      position = '';
+    var anchor = flowAnchor(media, root);
+    if (anchor !== root && anchor.parentElement) {
+      anchor.parentElement.insertBefore(control, anchor.nextSibling);
+    } else {
+      root.appendChild(control);
     }
-    if (position === '' || position === 'static') media.style.position = 'relative';
+  }
+
+  // The timestamp row, or the action bar when the timestamp has not been
+  // rendered. A header time sits above the pictures; the one that belongs under
+  // them is the first owned time that follows the gallery. A quote's time is
+  // not this post's.
+  function metaRow(root, media) {
+    var time = firstFollowing(root, media, 'time');
+    if (time) return rowOutsideMedia(time, media, root);
+    var group = firstFollowing(root, media, '[role="group"]');
+    if (group) return rowOutsideMedia(group, media, root);
+    return null;
+  }
+
+  function firstFollowing(root, media, selector) {
+    var nodes = root.querySelectorAll(selector);
+    for (var i = 0; i < nodes.length; i++) {
+      if (isInsideQuote(nodes[i], root)) continue;
+      if (follows(media, nodes[i])) return nodes[i];
+    }
+    return null;
+  }
+
+  function follows(earlier, later) {
+    var view = earlier.ownerDocument && earlier.ownerDocument.defaultView;
+    var flag = view && view.Node ? view.Node.DOCUMENT_POSITION_FOLLOWING : 4;
+    return Boolean(earlier.compareDocumentPosition(later) & flag);
+  }
+
+  // Highest ancestor of the timestamp that is still outside the gallery. Its
+  // parent contains the pictures, so that parent is the column, and this node
+  // is the row the bar has to precede. A node inside the gallery is not a row.
+  function rowOutsideMedia(node, media, root) {
+    while (node.parentElement && node.parentElement !== root && !node.parentElement.contains(media)) {
+      node = node.parentElement;
+    }
+    if (!node.parentElement || node.contains(media) || media.contains(node)) return null;
+    return node;
+  }
+
+  function flowAnchor(media, root) {
+    var node = media;
+    for (var i = 0; i < 8; i++) {
+      var parent = node.parentElement;
+      if (!parent || parent === root) break;
+      if (!isMediaChrome(parent)) break;
+      if (containsPostMeta(parent, root)) break;
+      node = parent;
+    }
+    return node;
+  }
+
+  // A box that crops or covers the gallery, and so cannot be the bar's parent.
+  // Inline styles and computed styles both count: X sets some of these as
+  // classes and some as the padding-bottom aspect-ratio trick.
+  function isMediaChrome(el) {
+    var style = computedStyle(el);
+    if (!style) return false;
+    var position = style.position || '';
+    if (position === 'absolute' || position === 'fixed') return true;
+    if (isHiddenOverflow(style.overflow) || isHiddenOverflow(style.overflowX) || isHiddenOverflow(style.overflowY)) {
+      return true;
+    }
+    var ratio = style.aspectRatio || '';
+    if (ratio && ratio !== 'auto') return true;
+    // The padding-bottom percentage trick. Computed padding is in pixels, and a
+    // box whose padding is what gives it height has almost no content height.
+    var pad = parseFloat(style.paddingBottom) || 0;
+    var height = parseFloat(style.height) || 0;
+    return pad > 20 && pad >= height;
+  }
+
+  function isHiddenOverflow(value) {
+    return value === 'hidden' || value === 'clip';
+  }
+
+  // The timestamp or the action bar. Their presence means this node is the post
+  // body, not the gallery chrome, and the bar has to stay inside it.
+  function containsPostMeta(el, root) {
+    var nodes = el.querySelectorAll('time, [role="group"]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (!isInsideQuote(nodes[i], root)) return true;
+    }
+    return false;
+  }
+
+  function isInsideQuote(element, root) {
+    var quote = element.closest('[data-testid="quoteTweet"]');
+    return Boolean(quote) && quote !== root && root.contains(quote);
+  }
+
+  // The article the gutter control is anchored to. The root itself, unless this
+  // root is a quote wrapper around that article — see mount().
+  function gutterHost(root, media) {
+    if (!media || typeof media.closest !== 'function') return root;
+    var article = media.closest('article[data-testid="tweet"]');
+    if (article && article !== root && root.contains(article)) return article;
+    return root;
+  }
+
+  // The feed control, in the gutter.
+  //
+  // Horizontal centre is the avatar's, which is the column to the left of the
+  // images. Vertical centre is the media's, because the avatar itself sits at
+  // the top of the post and the control belongs beside the pictures. With no
+  // avatar, the same idea is a fixed step to the left of the media. With no
+  // layout at all — the test realm, or a post whose pictures have not been
+  // measured yet — it parks on the avatar-column centre until a resize says
+  // otherwise.
+  //
+  // The thread line runs down that same column. Where it is a thin strip, a
+  // mask opens a gap around the control so the line does not strike through the
+  // icon. Anything wider is not the line, and masking it would punch a hole in
+  // the post, so it is left alone.
+  var AVATAR_SELECTOR = '[data-testid="Tweet-User-Avatar"]';
+  var GUTTER_INSET = 36;
+  var GUTTER_PARKED = '28px';
+  // One observer per post. Keyed by the root so a re-mount, which builds a new
+  // control after X has thrown the previous one away, disconnects the observer
+  // that was watching the detached control instead of leaving it on the post.
+  var gutterObservers = new WeakMap();
+
+  function watchGutter(root, control) {
+    placeGutter(root, control);
+    var view = root.ownerDocument && root.ownerDocument.defaultView;
+    if (!view || typeof view.ResizeObserver !== 'function') return;
+    var existing = gutterObservers.get(root);
+    if (existing && existing.control === control) return;
+    if (existing) existing.observer.disconnect();
+    var observer;
+    try {
+      observer = new view.ResizeObserver(function () {
+        if (!control.isConnected) {
+          observer.disconnect();
+          if (gutterObservers.get(root) && gutterObservers.get(root).observer === observer) {
+            gutterObservers.delete(root);
+          }
+          return;
+        }
+        placeGutter(root, control);
+      });
+    } catch {
+      return;
+    }
+    gutterObservers.set(root, { observer: observer, control: control });
+    try {
+      observer.observe(root);
+      var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
+      var media = commonAncestor(photos);
+      if (media && media !== root) observer.observe(media);
+    } catch {
+      observer.disconnect();
+      gutterObservers.delete(root);
+    }
+  }
+
+  function placeGutter(root, control) {
+    var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
+    var media = commonAncestor(photos);
+    if (!media || !root.getBoundingClientRect || !media.getBoundingClientRect) {
+      control.style.left = GUTTER_PARKED;
+      control.style.top = '50%';
+      control.style.transform = 'translate(-50%, -50%)';
+      return;
+    }
+    var rootRect = root.getBoundingClientRect();
+    var mediaRect = media.getBoundingClientRect();
+    if (!mediaRect.width && !mediaRect.height) {
+      control.style.left = GUTTER_PARKED;
+      control.style.top = '50%';
+      control.style.transform = 'translate(-50%, -50%)';
+      return;
+    }
+    var avatar = XIW.ownElements(root, AVATAR_SELECTOR)[0];
+    var avatarRect = avatar && avatar.getBoundingClientRect ? avatar.getBoundingClientRect() : null;
+    var centerX;
+    if (avatarRect && avatarRect.width) {
+      centerX = avatarRect.left + avatarRect.width / 2 - rootRect.left;
+    } else {
+      centerX = mediaRect.left - rootRect.left - GUTTER_INSET;
+    }
+    var centerY = mediaRect.top + mediaRect.height / 2 - rootRect.top;
+    control.style.left = centerX + 'px';
+    control.style.top = centerY + 'px';
+    control.style.transform = 'translate(-50%, -50%)';
+    clearThreadLine(root, control, avatar);
+  }
+
+  function clearThreadLine(root, control, avatar) {
+    if (!avatar || !avatar.parentElement || !control.getBoundingClientRect) return;
+    var line = threadLine(avatar);
+    if (!line) return;
+    var lineRect = line.getBoundingClientRect();
+    var btnRect = control.getBoundingClientRect();
+    if (lineRect.width <= 0 || lineRect.width > 4 || lineRect.height < 24) return;
+    if (btnRect.height < 1) return;
+    var gapTop = Math.max(0, btnRect.top - 6 - lineRect.top);
+    // The dots hang below the button and are not part of its border box.
+    var gapBottom = Math.max(0, btnRect.bottom + 16 - lineRect.top);
+    if (gapTop >= lineRect.height || gapBottom <= 0) return;
+    var topPct = ((gapTop / lineRect.height) * 100).toFixed(2);
+    var bottomPct = ((gapBottom / lineRect.height) * 100).toFixed(2);
+    var mask = 'linear-gradient(to bottom, black ' + topPct + '%, transparent ' + topPct +
+      '%, transparent ' + bottomPct + '%, black ' + bottomPct + '%)';
+    line.style.maskImage = mask;
+    line.style.webkitMaskImage = mask;
+  }
+
+  function threadLine(avatar) {
+    var column = avatar.parentElement;
+    if (!column || typeof column.querySelectorAll !== 'function') return null;
+    var nodes = column.querySelectorAll('div');
+    var line = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el === avatar || avatar.contains(el) || el.contains(avatar)) continue;
+      var rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.width <= 4 && rect.height > 24) line = el;
+    }
+    return line;
+  }
+
+  function imageDots(doc, count) {
+    var dots = doc.createElement('div');
+    dots.className = DOTS_CLASS;
+    dots.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < count; i++) {
+      var dot = doc.createElement('span');
+      dot.className = DOT_CLASS;
+      dots.appendChild(dot);
+    }
+    return dots;
+  }
+
+  // `position: relative` on the post, so the gutter control's absolute position
+  // means "inside this post" rather than "inside whatever ancestor X happened to
+  // position". Written only when the post has no position of its own, so a post
+  // X already positioned is left alone.
+  //
+  // This is the one place the extension writes a layout property onto an element
+  // it did not create. The gutter carries its own z-index because a positioned
+  // element with z-index: auto is not a stacking context, and without one the
+  // control's number would be compared against every z-index on the page.
+  function ensurePositioned(el) {
+    var style = computedStyle(el);
+    if (!style) {
+      el.style.position = 'relative';
+      return;
+    }
+    var position = style.position || '';
+    if (position === '' || position === 'static') el.style.position = 'relative';
+  }
+
+  function computedStyle(el) {
+    var view = el.ownerDocument && el.ownerDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== 'function') return null;
+    try {
+      return view.getComputedStyle(el);
+    } catch {
+      return null;
+    }
   }
 
   // The deepest element that contains every one of `elements`.
@@ -541,13 +905,19 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // The mark beside the label. Inline SVG rather than a text glyph or a background
   // image, so it inherits `currentColor` from the button and needs no request.
   //
-  // Two marks, because the reference uses two: a split-image mark (two panels and a
-  // bar) on the labelled pill, and a four-pointed sparkle on the bare icon the feed
-  // uses. They are the same control, so the difference is the shape of the furniture
-  // rather than of the action -- but a labelled pill with a sparkle on it or a bare
-  // split-image glyph in a feed would each be a shape the reference does not have.
+  // Two marks, because the reference uses two. The labelled pill carries a
+  // split-image mark (two panels and a bar). The feed icon carries the two frames
+  // and the inward arrows TapToSee draws in the gutter. Same control; the mark is
+  // the shape of the furniture. fill-rule evenodd is what makes the frame paths
+  // hollow — both subpaths wind the same way, and the default fill would paint
+  // them solid.
   var SPLIT_MARK = ['M2 4h8v12H2z', 'M14 4h8v12h-8z', 'M2 18h20v2H2z'];
-  var SPARKLE_MARK = ['M12 2c.9 4.6 3.4 7.1 8 8-4.6.9-7.1 3.4-8 8-.9-4.6-3.4-7.1-8-8 4.6-.9 7.1-3.4 8-8z'];
+  var FRAME_MARK = [
+    'M2 4h7v16H2V4zm2 2v12h3V6H4z',
+    'M15 4h7v16h-7V4zm2 2v12h3V6h-3z',
+    'M10 12l3-2.5v5z',
+    'M14 12l-3-2.5v5z'
+  ];
 
   function icon(doc, mark) {
     var NS = 'http://www.w3.org/2000/svg';
@@ -556,6 +926,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('focusable', 'false');
+    svg.setAttribute('fill-rule', 'evenodd');
     var paths = mark || SPLIT_MARK;
     for (var i = 0; i < paths.length; i++) {
       var path = doc.createElementNS(NS, 'path');
@@ -576,6 +947,48 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   // One stylesheet for the page, found by its own class. Injected per document
   // rather than per root, because a page with forty mergeable posts must carry
   // one <style>, not forty.
+  // X sets color-scheme and the page background on the root. The gray icon is
+  // readable on a light page and nearly invisible on lights-out, so the dark
+  // rules key off this attribute rather than the operating system's preference.
+  function noteTheme(doc) {
+    var root = doc.documentElement;
+    if (!root || !root.setAttribute) return;
+    var next = isDarkPage(doc) ? 'dark' : 'light';
+    if (root.getAttribute('data-xiw-theme') !== next) root.setAttribute('data-xiw-theme', next);
+  }
+
+  function isDarkPage(doc) {
+    var view = doc.defaultView;
+    var root = doc.documentElement;
+    if (!view || typeof view.getComputedStyle !== 'function' || !root) return false;
+    var nodes = [root, doc.body];
+    for (var i = 0; i < nodes.length; i++) {
+      if (!nodes[i]) continue;
+      var style;
+      try {
+        style = view.getComputedStyle(nodes[i]);
+      } catch {
+        continue;
+      }
+      if (!style) continue;
+      var scheme = String(style.colorScheme || '').toLowerCase();
+      var saysDark = scheme.indexOf('dark') !== -1;
+      var saysLight = scheme.indexOf('light') !== -1;
+      if (saysDark && !saysLight) return true;
+      if (saysLight && !saysDark) return false;
+      var rgb = canvasRgb(style.backgroundColor);
+      if (rgb) return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) < 128;
+    }
+    return false;
+  }
+
+  function canvasRgb(value) {
+    var match = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([0-9.]+))?/.exec(value || '');
+    if (!match) return null;
+    if (match[4] !== undefined && parseFloat(match[4]) === 0) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
+  }
+
   function ensureStyles(doc) {
     if (!doc || doc.querySelector('style.' + STYLE_CLASS)) return;
     var style = doc.createElement('style');

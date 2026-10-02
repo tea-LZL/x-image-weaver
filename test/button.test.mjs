@@ -52,8 +52,8 @@ function setup({
   tweetId = '123',
   handle = 'ada',
   // Which page the post is being read on. button.js picks its control from the
-  // path -- a labelled pill under the media on a post's own page, a compact icon on
-  // the media in a feed -- so the context is part of the fixture, not a detail each
+  // path -- a labelled pill under the media on a post's own page, a gutter icon to
+  // the left of the images in a feed -- so the context is part of the fixture, not a detail each
   // test sets up for itself. Defaults to the post page, where the bar is.
   context = 'post',
   stitch,
@@ -309,6 +309,140 @@ test('the bar follows the whole media block, not the first row of a nested grid'
   assert.notEqual(bar.previousElementSibling, top, 'following the first row is the bug this pins');
 });
 
+// The bar has to leave the box X crops the gallery with. That box is absolute and
+// overflow-hidden with a fixed height, so a bar inserted inside it overflows onto
+// the timestamp and, because the bar paints above X's card link, takes the clicks
+// that belonged to the time and the view count.
+test('the bar sits outside the clipping media box and above the timestamp', () => {
+  const t = setup({ photos: ['a', 'b'] });
+  const root = t.roots()[0];
+  const flatRow = t.row();
+
+  const grid = t.document.createElement('div');
+  for (const photo of [...flatRow.querySelectorAll('[data-testid="tweetPhoto"]')]) grid.appendChild(photo);
+
+  const chrome = t.document.createElement('div');
+  chrome.style.position = 'absolute';
+  chrome.style.overflow = 'hidden';
+  chrome.appendChild(grid);
+
+  const outer = t.document.createElement('div');
+  outer.appendChild(chrome);
+  flatRow.replaceWith(outer);
+
+  const time = t.document.createElement('time');
+  time.textContent = '1:13 AM';
+  outer.after(time);
+
+  t.XIW.button.mount(root);
+
+  const bar = root.querySelector('[data-xiw-bar]');
+  assert.ok(bar, 'a bar was placed');
+  assert.equal(chrome.contains(bar), false, 'not inside the box that crops the gallery');
+  assert.equal(outer.contains(bar), false, 'and not inside the wrapper around that box');
+  assert.equal(bar.nextElementSibling, time, 'directly before the timestamp, on a line of its own');
+});
+
+// Climbing out of every overflow-hidden ancestor would walk out of the post body
+// when that body is itself overflow-hidden and already holds the timestamp. The
+// bar would then land below the action bar. The climb stops at the meta.
+test('the bar does not jump past a timestamp that shares the clipping box', () => {
+  const t = setup({ photos: ['a', 'b'] });
+  const root = t.roots()[0];
+  const flatRow = t.row();
+
+  const grid = t.document.createElement('div');
+  for (const photo of [...flatRow.querySelectorAll('[data-testid="tweetPhoto"]')]) grid.appendChild(photo);
+
+  const time = t.document.createElement('time');
+  time.textContent = '1:13 AM';
+
+  const shell = t.document.createElement('div');
+  shell.style.overflow = 'hidden';
+  shell.append(grid, time);
+  flatRow.replaceWith(shell);
+
+  t.XIW.button.mount(root);
+
+  const bar = root.querySelector('[data-xiw-bar]');
+  assert.equal(bar.previousElementSibling, grid, 'still directly after the gallery');
+  assert.equal(bar.nextElementSibling, time, 'and directly before the timestamp');
+  assert.equal(shell.contains(bar), true, 'inside the post body, not after it');
+});
+
+// The live status page sizes a wrapper to the pictures and does not mark it as
+// cropping chrome: no absolute position, no overflow, no aspect-ratio. The
+// timestamp and the view count are the next row, outside that wrapper. A bar
+// inserted inside the wrapper overflows onto that row. The header also carries
+// its own time, earlier in the post; anchoring to that one would pin the pill
+// to the top.
+test('the bar is a line of its own above the timestamp, outside the fixed-height gallery', () => {
+  const t = setup({ photos: ['a', 'b'] });
+  const root = t.roots()[0];
+  const flatRow = t.row();
+
+  const posted = t.document.createElement('time');
+  posted.textContent = '2h';
+  root.insertBefore(posted, root.firstChild);
+
+  const grid = t.document.createElement('div');
+  for (const photo of [...flatRow.querySelectorAll('[data-testid="tweetPhoto"]')]) grid.appendChild(photo);
+
+  const crop = t.document.createElement('div');
+  crop.style.height = '480px';
+  crop.appendChild(grid);
+
+  const time = t.document.createElement('time');
+  time.setAttribute('datetime', '2026-10-02T05:00:00.000Z');
+  time.textContent = '5:00 AM · Oct 2, 2026';
+  const views = t.document.createElement('span');
+  views.textContent = '3,978 Views';
+  const meta = t.document.createElement('div');
+  meta.style.display = 'flex';
+  meta.style.flexDirection = 'row';
+  meta.append(time, views);
+
+  flatRow.replaceWith(crop);
+  crop.after(meta);
+
+  t.XIW.button.mount(root);
+
+  const bar = root.querySelector('[data-xiw-bar]');
+  assert.ok(bar, 'a bar was placed');
+  assert.equal(crop.contains(bar), false, 'not inside the box that is only as tall as the pictures');
+  assert.equal(meta.contains(bar), false, 'not in the timestamp row, where it would share that line');
+  assert.equal(bar.nextElementSibling, meta, 'the line immediately above the timestamp and the views');
+  assert.equal(bar.parentElement, meta.parentElement, 'in the same column as that row, so the column grows');
+  assert.equal(
+    posted.compareDocumentPosition(bar) & t.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    t.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    'below the header time, not anchored to it'
+  );
+});
+
+// The quote has a timestamp of its own, and it follows the outer gallery. Anchoring
+// to that time would put the outer post's pill inside the quote.
+test('the bar precedes the post\'s own timestamp, not the quoted post\'s', () => {
+  const t = setup({ photos: ['a', 'b'], quote: { photos: ['c', 'd'], tweetId: '456' } });
+  const root = t.roots()[0];
+  const quote = root.querySelector('[data-testid="quoteTweet"]');
+
+  const quoteTime = t.document.createElement('time');
+  quoteTime.textContent = '1:00 AM';
+  quote.appendChild(quoteTime);
+
+  const time = t.document.createElement('time');
+  time.textContent = '5:00 AM · Oct 2, 2026';
+  root.appendChild(time);
+
+  t.XIW.button.mount(root);
+
+  const bar = [...root.querySelectorAll('[data-xiw-bar]')].find((el) => el.closest('[data-testid="quoteTweet"]') === null);
+  assert.ok(bar, 'the outer post has a bar');
+  assert.equal(quote.contains(bar), false, 'and it is not inside the quote');
+  assert.equal(bar.nextElementSibling, time, 'directly before this post\'s timestamp');
+});
+
 // --- 2b. which way the parts are joined ------------------------------------------
 //
 // Two images side by side in the post are one picture split down the middle, and
@@ -355,26 +489,61 @@ test('a nested grid joins its parts top to bottom', () => {
 // is no room for anything else, and a labelled pill beside an image count under the
 // media on a post's own page, where there is. Both are the same button.
 
-test('a feed gets the compact icon on the media, not a bar', () => {
+test('a feed gets the gutter icon beside the media, not a bar and not a mark on the picture', () => {
   const t = setup({ photos: ['a', 'b'], context: 'timeline' });
-  t.XIW.button.mount(t.roots()[0]);
+  const root = t.roots()[0];
+  t.XIW.button.mount(root);
 
   const control = t.document.querySelector('[data-xiw-control]');
   assert.ok(control, 'a control exists');
-  assert.equal(control.className, 'xiw-merge-overlay', 'and it is the overlay shape');
-  assert.equal(control.parentElement, t.row(), 'sitting on the media block');
+  assert.equal(control.className, 'xiw-merge-gutter', 'and it is the gutter shape');
+  assert.equal(control.parentElement, root, 'anchored to the post, where the gallery cannot clip it');
+  assert.equal(t.row().contains(control), false, 'not inside the media, which is where it would cover the picture');
   assert.equal(t.document.querySelector('[data-xiw-bar]'), null, 'with no bar, which would grow every card');
   assert.equal(t.button().classList.contains('xiw-merge-button--icon'), true, 'and an icon-only button');
-  assert.equal(t.row().style.position, 'relative', 'the media block is made positioned to hold it');
+  assert.equal(root.style.position, 'relative', 'the post is positioned so the gutter anchors to it');
+  assert.equal(t.row().style.position, '', 'the media block is left exactly as X laid it out');
+  // No layout in jsdom, so the control parks on the avatar-column centre until a
+  // real box exists. A zero rect must not push it off the left of the post.
+  assert.equal(control.style.left, '28px');
+  assert.equal(control.style.top, '50%');
   // The visible words are clipped in this variant, so the accessible name is the
   // only thing that says what the control does.
   assert.equal(t.button().getAttribute('aria-label'), ARIA_LABEL, 'still announced as the action it performs');
   assert.ok(t.button().querySelector('.xiw-merge-label'), 'and the label is present, just clipped rather than removed');
-  // The two variants carry different marks: a sparkle here, a split-image glyph on
-  // the pill. A labelled pill with a sparkle, or a bare split-image glyph in a feed,
-  // would each be a shape the reference does not use.
-  assert.equal(t.button().querySelectorAll('path').length, 1, 'the feed mark is the one-path sparkle');
-  assert.match(t.button().querySelector('path').getAttribute('d'), /^M12 2c/, 'and it is that path');
+  // One dot per image, under the icon, which is how the reference counts the parts.
+  assert.equal(control.querySelectorAll('.xiw-merge-dot').length, 2, 'a dot for each image');
+  assert.equal(control.querySelector('.xiw-merge-dots').getAttribute('aria-hidden'), 'true', 'the dots are not a second name');
+  // The feed mark is the two frames and the inward arrows, not the pill's split
+  // glyph and not a sparkle drawn on the art.
+  assert.equal(t.button().querySelectorAll('path').length, 4, 'the feed mark is the frame-and-arrows icon');
+  assert.match(t.button().querySelector('path').getAttribute('d'), /^M2 4h7/, 'and it is that icon');
+});
+
+test('the gutter control centres on the avatar and on the media', () => {
+  const t = setup({ photos: ['a', 'b'], context: 'timeline' });
+  const root = t.roots()[0];
+  const media = t.row();
+  const avatar = t.document.createElement('div');
+  avatar.setAttribute('data-testid', 'Tweet-User-Avatar');
+  root.insertBefore(avatar, root.firstChild);
+
+  const box = (left, top, width, height) => () => ({
+    left, top, width, height, right: left + width, bottom: top + height, x: left, y: top,
+  });
+  root.getBoundingClientRect = box(10, 20, 600, 500);
+  media.getBoundingClientRect = box(120, 180, 400, 220);
+  avatar.getBoundingClientRect = box(26, 30, 40, 40);
+
+  t.XIW.button.mount(root);
+
+  const control = t.document.querySelector('[data-xiw-control]');
+  // Avatar centre is 26 + 20, and the post starts at 10, so the icon lands at 36.
+  // The media's vertical centre is 180 + 110, and the post starts at 20, so 270.
+  assert.equal(control.style.left, '36px', 'centred on the avatar column, to the left of the images');
+  assert.equal(control.style.top, '270px', 'centred on the media, not on the top of the post');
+  assert.equal(control.style.transform, 'translate(-50%, -50%)');
+  assert.equal(media.contains(control), false);
 });
 
 test("a post's own page gets the labelled bar and no overlay", () => {
@@ -382,7 +551,7 @@ test("a post's own page gets the labelled bar and no overlay", () => {
   t.XIW.button.mount(t.roots()[0]);
 
   assert.equal(t.document.querySelector('[data-xiw-control]').className, 'xiw-merge-bar');
-  assert.equal(t.document.querySelector('.xiw-merge-overlay'), null, 'no overlay on the media');
+  assert.equal(t.document.querySelector('.xiw-merge-gutter'), null, 'no gutter control on the media');
   assert.equal(t.button().classList.contains('xiw-merge-button--icon'), false, 'and the label is shown');
   assert.equal(t.row().style.position, '', 'the media block is left exactly as X laid it out');
 });
@@ -417,7 +586,7 @@ test('a reply on a post page is a feed card, not the post being read', () => {
   const controls = t.document.querySelectorAll('[data-xiw-control]');
   assert.equal(controls.length, 2, 'both posts have a control');
   assert.equal(controls[0].className, 'xiw-merge-bar', 'the post the page is about gets the bar');
-  assert.equal(controls[1].className, 'xiw-merge-overlay', 'and the reply gets the feed shape');
+  assert.equal(controls[1].className, 'xiw-merge-gutter', 'and the reply gets the feed shape');
 });
 
 // --- 3. it is a real button, and it is styled without X's help -----------------
@@ -440,7 +609,7 @@ test('the control is a real labelled button with the required geometry', () => {
   assert.equal(injected.style.position, '', 'not positioned: it sits below the media');
   assert.equal(injected.querySelector('.xiw-merge-icon').tagName.toLowerCase(), 'svg', 'with the split-image mark beside the label');
   assert.equal(injected.querySelectorAll('path').length, 3, 'drawn as paths, so it needs no request and inherits the colour');
-  assert.equal(injected.querySelector('path').getAttribute('d'), 'M2 4h8v12H2z', 'and it is the split-image mark, not the feed sparkle');
+  assert.equal(injected.querySelector('path').getAttribute('d'), 'M2 4h8v12H2z', 'and it is the split-image mark, not the feed frames');
 });
 
 test('one stylesheet, scoped to this extension\'s own classes, injected once', () => {
@@ -473,9 +642,9 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
 
   // Two variants, two shapes, and the difference asserted rather than assumed.
   const bar = /\.xiw-merge-bar \{([^}]*)\}/.exec(css);
-  const overlay = /\.xiw-merge-overlay \{([^}]*)\}/.exec(css);
+  const gutter = /\.xiw-merge-gutter \{([^}]*)\}/.exec(css);
   assert.ok(bar, 'the post-page bar is styled');
-  assert.ok(overlay, 'and the feed overlay is styled');
+  assert.ok(gutter, 'and the feed gutter is styled');
   assert.doesNotMatch(bar[1], /position:\s*absolute/, 'the bar is in the flow, under the media');
   // Positioned AND layered, which is what fixes the dead click: X's stretched card
   // link is an absolutely positioned overlay over the whole tweet and swallows the
@@ -483,13 +652,62 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   assert.match(bar[1], /position:\s*relative/, 'the bar is positioned, so it beats that overlay');
   assert.match(bar[1], /z-index:\s*\d/, 'and layered');
   assert.match(bar[1], /width:\s*100%/, 'and takes its own line rather than being laid out beside the media');
-  assert.match(overlay[1], /position:\s*absolute/, 'the overlay sits on the media');
-  assert.match(overlay[1], /left:\s*\d/, 'on its left, where the reference puts it');
-  assert.match(overlay[1], /z-index:\s*\d/, 'and carries its own z-index, since X positions things too');
+  // Content height, not 100%. In the column a post is laid out in, a 100% basis is
+  // a height, and that is what stretched the pill over the timestamp and the views.
+  assert.match(bar[1], /flex:\s*0 0 auto/, 'only as tall as the pill');
+  assert.doesNotMatch(bar[1], /flex:\s*0 0 100%/, 'a 100% basis is what covered the views');
+  assert.match(bar[1], /pointer-events:\s*none/, 'the empty part of the line does not take clicks meant for the views');
+  // Measured off the status page the pill was covering: about one pill-height of
+  // black between the gallery and the control, and the same again before the time.
+  assert.match(bar[1], /padding:\s*28px 0 28px/, 'a clear gap above the pill and above the timestamp');
+  assert.match(gutter[1], /position:\s*absolute/, 'the gutter control is taken out of the post flow');
+  assert.doesNotMatch(gutter[1], /left:\s*\d/, 'its horizontal position is measured, not a fixed inset over the picture');
+  assert.match(gutter[1], /z-index:\s*\d/, 'and carries its own z-index, since X positions things too');
+  assert.match(gutter[1], /pointer-events:\s*none/, 'the gutter box itself does not steal clicks');
   assert.match(css, /button--icon/, 'the icon-only shape is styled');
-  // A disc rather than a bare glyph: the bare version read as a missing control.
-  assert.match(css, /button--icon \{(?:[^}]*?)background-color:\s*rgba\(0, 0, 0, 0\.6\)/, 'on a disc with contrast against any image');
+  // X's action-button colour, not a disc painted on the art.
+  assert.match(css, /button--icon \{(?:[^}]*?)background-color:\s*transparent/, 'no disc');
+  assert.match(css, /button--icon:hover \{(?:[^}]*?)color:\s*rgb\(29, 155, 240\)/, 'hover turns the icon X blue');
+  assert.match(css, /\.xiw-merge-dot \{/, 'the per-image dots are styled');
+  assert.doesNotMatch(css, /rgba\(0,\s*0,\s*0,\s*0\.6\)/, 'the dark disc is gone');
   assert.doesNotMatch(css, /opacity:\s*0;/, 'nothing is hidden until hovered: both variants are always visible');
+  assert.match(css, /@keyframes xiw-merge-spin/, 'a merge spins the timeline icon');
+  assert.match(
+    css,
+    /\.xiw-merge-button--icon\.xiw-merge-button--busy \.xiw-merge-icon \{[^}]*animation:\s*xiw-merge-spin/,
+    'the spin is on the icon, and only while it is busy'
+  );
+  assert.match(css, /prefers-reduced-motion:\s*reduce/, 'reduced motion keeps the brighter disc and skips the spin');
+  assert.match(
+    css,
+    /data-xiw-theme="dark"\] \.xiw-merge-button\.xiw-merge-button--icon \{[^}]*color:\s*rgb\(255,\s*255,\s*255\)/,
+    'a dark page draws the icon white'
+  );
+  assert.match(
+    css,
+    /data-xiw-theme="dark"\] \.xiw-merge-button\.xiw-merge-button--icon:hover \{[^}]*background-color:\s*rgba\(255,\s*255,\s*255,\s*0\.42\)/,
+    'and hover brightens the disc behind it'
+  );
+});
+
+test('the gutter follows the page: white on a dark timeline, gray on a light one', () => {
+  const dark = setup({ photos: ['a', 'b'], context: 'timeline' });
+  dark.document.documentElement.style.colorScheme = 'dark';
+  dark.document.documentElement.style.backgroundColor = 'rgb(0, 0, 0)';
+  dark.XIW.button.mount(dark.roots()[0]);
+  assert.equal(dark.document.documentElement.getAttribute('data-xiw-theme'), 'dark');
+
+  // Dim is dark too, even when color-scheme was not set and only the canvas was.
+  const dim = setup({ photos: ['a', 'b'], context: 'timeline' });
+  dim.document.documentElement.style.backgroundColor = 'rgb(21, 32, 43)';
+  dim.XIW.button.mount(dim.roots()[0]);
+  assert.equal(dim.document.documentElement.getAttribute('data-xiw-theme'), 'dark', 'X dim is a dark page');
+
+  const light = setup({ photos: ['a', 'b'], context: 'timeline' });
+  light.document.documentElement.style.colorScheme = 'light';
+  light.document.documentElement.style.backgroundColor = 'rgb(255, 255, 255)';
+  light.XIW.button.mount(light.roots()[0]);
+  assert.equal(light.document.documentElement.getAttribute('data-xiw-theme'), 'light');
 });
 
 // --- 4. the click re-collects the media -----------------------------------------

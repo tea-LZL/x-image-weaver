@@ -24,9 +24,9 @@ built in the page with Canvas 2D and downloaded straight from a blob URL.
 
 ## Use
 
-Open any post with two or more images and a **Merge** control appears — a compact icon on the
-media in a feed, and a labelled pill beside an image count under the media on a post's own
-page. Click it. The parts are fetched at original resolution, joined with no gap in the
+Open any post with two or more images and a **Merge** control appears — a small icon in the
+gutter to the left of the images in a feed, and a labelled pill beside an image count on its
+own line under the media on a post's own page. Click it. The parts are fetched at original resolution, joined with no gap in the
 direction the post lays them out, and shown full-screen. **Download** saves the result as
 `x-image-weaver-<handle>-<tweetId>.png`.
 
@@ -60,9 +60,11 @@ Two details worth knowing before changing anything:
   `function` declarations in a classic content script become properties of the shared isolated
   world, and a later file would silently clobber them. `test/loader.test.mjs` enforces this for
   every script in the manifest.
-- **The button is a child of the media *row*, never of a photo container.** X sets
-  `overflow: hidden` on `[data-testid="tweetPhoto"]` to crop, so a button placed inside one is
-  clipped and becomes invisible with nothing to diagnose.
+- **The button is never a child of a photo container, and in a feed it is not inside the
+  gallery either.** X sets `overflow: hidden` on `[data-testid="tweetPhoto"]` and on the box
+  around the gallery. A button inside either is clipped, and one that overflows that box lands
+  on the timestamp. The feed control is a child of the post. The status-page bar is the
+  previous sibling of the timestamp row, outside the gallery.
 
 ## Tests
 
@@ -71,7 +73,7 @@ npm install          # devDependency: jsdom. The extension itself ships none of 
 node --test test/*.test.mjs
 ```
 
-148 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
+154 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
 and fails.
 
 What is covered automatically: the pure helpers, the DOM extraction rules under jsdom
@@ -141,8 +143,11 @@ reloading the extension.**
       one wide image, not stacked.
 - [ ] A 4-image post (a 2×2 grid) — joined **top to bottom**, which is what the tap-to-see
       posts want.
-- [ ] In a feed, the control is a compact icon on the **left** of the media, vertically
-      centred, on a dark disc, always visible.
+- [ ] In a feed, the control is an icon in the gutter to the **left** of the images,
+      vertically centred on the media, with one dot per image under it. It is not drawn
+      on the picture. On a light page it is gray and hover turns it blue. On a dark page
+      it is white, and hover brightens the disc behind it. While a merge runs, the icon
+      spins. It is always visible.
 - [ ] Clicking it works — it is not swallowed by X's own card link.
 - [ ] Scrolling a timeline and back does not lose the control on a recycled card.
 - [ ] On a post's own page, it is a labelled pill below the images, beside the count, on its
@@ -174,7 +179,8 @@ reloading the extension.**
 
 - [ ] The composite shows the **whole** image: the Download button and the ✕ control never
       cover its bottom or top rows. Check on a short window (~700px tall) as well as a tall one.
-- [ ] The button is visible on hover and **not** clipped by X's media grid.
+- [ ] The button is always visible and **not** clipped by X's media grid, and it does not
+      cover the timestamp, the view count, or the picture.
 - [ ] X's own media grid looks unchanged: the button's stacking context does not alter how
       X paints the post around it.
 - [ ] Escape closes the overlay; the page scrolls normally again afterwards.
@@ -212,8 +218,8 @@ reloading the extension.**
 - [ ] A post whose images are absolutely-pathed (`https://x.com/<handle>`) — believed not to
       occur on X; if it does, the download filename degrades to
       `x-image-weaver-unknown-<tweetId>.png` rather than failing.
-- [ ] Touch/pen input on a phone-sized window: the button only reveals on hover, so confirm
-      it is reachable and tappable.
+- [ ] Touch/pen input on a phone-sized window: the button is visible without hovering and
+      is tappable.
 
 ## Known limitations
 

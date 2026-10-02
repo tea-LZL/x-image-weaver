@@ -189,7 +189,7 @@ There are two shapes and the context decides which, matching the reference:
 | Context | Control |
 |---|---|
 | A post's own page (`/<handle>/status/<id>`, and only for the post whose id matches) | A bar directly **after** the post's media: a muted `2 Images` count beside a blue rounded **Merge** pill with a split-image mark. |
-| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | A compact icon-only button **on** the media block, at its left edge and vertically centred, on a translucent disc. |
+| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | An icon-only button in the **gutter to the left of the images**, centred on the avatar column and on the media's vertical middle. On a light page it is gray and hover washes it blue. On a dark page the icon and its dots are white, on a visible disc, and hover brightens that disc. While a merge runs the icon spins; reduced motion holds the brighter disc instead. One dot per image sits under the icon. |
 
 The split is deliberate rather than two designs for one job. A feed card has no room
 below the media for a bar, and adding one to every card in a timeline changes the shape
@@ -198,16 +198,23 @@ shapes are the same `<button>` with the same click behaviour — only the furnit
 label's visibility differ. The icon-only variant clips its label rather than removing it,
 so the accessible name survives.
 
-The feed variant sits on a translucent disc rather than as a bare glyph: a bare white mark
-reads as a missing control against pale artwork, which is exactly how it was reported.
+The feed variant is not drawn on the picture. A mark on the picture covers the art and
+disappears into a pale or busy image. It sits where TapToSee puts it: in the avatar
+column, beside the images, with the thread line masked around it when that line is a
+thin strip.
 
 **Both variants are positioned, and it is not cosmetic.** X's stretched card link is an
 absolutely positioned overlay covering the whole tweet; a static control is painted beneath
 it and the click lands on the link instead of the button, so the handler never runs. The
-bar takes `position: relative` with a `z-index`, and the feed overlay `position: absolute`
-with one. The bar also takes `width: 100%` so it gets its own line: a bare block child of a
-flex row or grid is laid out beside the media rather than under it, which is how it came to
-overlap the timestamp and the view counts.
+bar takes `position: relative` with a `z-index`, and the feed control `position: absolute`
+with one, anchored to the post rather than to the gallery. The bar takes `width: 100%` and
+`flex: 0 0 auto` so it gets its own line at its content height. A `flex-basis` of `100%`
+is a height in the column a post is laid out in, which stretched the pill over the
+timestamp. The bar is inserted **immediately before the post's timestamp row**, outside
+the gallery. A bar placed after the pictures instead lands inside the box X sizes to
+them; that box does not grow, so the pill overflows onto the view count and the z-index
+then steals the click. Empty parts of the bar pass clicks through. The row has `28px`
+of padding above and below the pill, so the time and the views sit on the next line.
 
 An empty click-time collect — the post's media was re-rendered and is no longer a readable
 gallery — is **reported**, not swallowed. The control removes itself and the overlay opens
@@ -216,11 +223,13 @@ does nothing, which is the failure this spec's failure-modes table names.
 
 The media block is always the **deepest common ancestor of the post's own photo
 containers**, so the control follows the whole media area rather than one row of a nested
-grid. In the feed variant that block also takes `position: relative` — the one place the
-extension writes a layout property onto an element it did not create — and the overlay
-carries its own `z-index`, because a positioned element with `z-index: auto` is not a
+grid. In the feed variant the **post** takes `position: relative` — the one place the
+extension writes a layout property onto an element it did not create — and the gutter
+control carries its own `z-index`, because a positioned element with `z-index: auto` is not a
 stacking context and the control's number would otherwise be compared against every
-`z-index` on the page, where X's own overlays live.
+`z-index` on the page, where X's own overlays live. The control's left and top are measured
+from the avatar and the media, and a resize observer keeps them there when the pictures
+finish loading.
 
 It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard
 and announced correctly. `aria-disabled` and `aria-busy` carry the busy state rather than

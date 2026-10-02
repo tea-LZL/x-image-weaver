@@ -582,7 +582,10 @@ test('an article quoting a post: every root is marked, and the outer takes only 
   // post's button is on the outer post's row and is not inside the quote at all.
   // Observable in jsdom, even though the crop that would hide a misplaced button
   // needs a layout engine.
-  assert.equal(outer.querySelector(BUTTON).closest('[data-testid="quoteTweet"]'), null);
+  const outerButton = [...outer.querySelectorAll(BUTTON)].find(
+    (el) => el.closest('[data-testid="quoteTweet"]') === null
+  );
+  assert.ok(outerButton, 'the outer post has its own button, and it is not the quoted post\'s');
   assert.ok(wrapper.querySelector(BUTTON).closest('[data-testid="quoteTweet"]'));
 
   // The ownership rule, asserted against the value the rule produces and not
@@ -596,19 +599,19 @@ test('an article quoting a post: every root is marked, and the outer takes only 
   assert.deepEqual(XIW.collectPhotoIds(quoted), ['cc', 'dd'], 'and the quoted article agrees');
 
   // Where the controls physically landed, which is a separate question from
-  // ownership. Each is in a bar directly after the media block it belongs to, so
-  // the outer post's control follows the outer post's own two photos and is not
-  // anywhere inside the quote.
+  // ownership. On a feed the control is the gutter icon, anchored to the post
+  // rather than painted on the gallery. The outer post's control belongs to the
+  // outer post and is not anywhere inside the quote. querySelector would find the
+  // quoted post's control first, because that article sits earlier in the tree.
   const outerRow = outer.querySelector('[data-testid="tweetPhoto"]').parentElement;
   assert.equal(outerRow.querySelectorAll('[data-testid="tweetPhoto"]').length, 2);
-  // The fixture is on a feed URL, so the control is the compact overlay variant
-  // that sits on the media; the labelled bar is only for a post's own page. Either
-  // way the placement claim is the same: this post's control belongs to this post's
-  // media and is not in the quote.
-  const outerControl = outer.querySelector('[data-xiw-control]');
+  const outerControl = [...outer.querySelectorAll('[data-xiw-control]')].find(
+    (el) => el.closest('[data-testid="quoteTweet"]') === null
+  );
   assert.ok(outerControl, "the outer post has a control of its own");
   assert.equal(outerControl.closest('[data-testid="quoteTweet"]'), null, 'and it is not inside the quoted post');
-  assert.equal(outerControl.parentElement, outerRow, 'it is on the outer post\'s own media block');
+  assert.equal(outerControl.parentElement, outer, 'anchored to the outer post, not to its gallery and not to the quote');
+  assert.equal(outerRow.contains(outerControl), false, 'and not on the picture');
   assert.equal(outerControl.querySelectorAll(BUTTON).length, 1);
 });
 
@@ -629,7 +632,10 @@ test('a quote nested in a post added later mounts every root once', async () => 
 
   assert.equal(marked(document).length, 3, 'the nested roots are found, not just the outer one');
   assert.equal(buttons(document).length, 2);
-  assert.equal(outer.querySelector(BUTTON).closest('[data-testid="quoteTweet"]'), null);
+  assert.ok(
+    [...outer.querySelectorAll(BUTTON)].some((el) => el.closest('[data-testid="quoteTweet"]') === null),
+    'the outer post has a button of its own'
+  );
   assert.ok(wrapper.querySelector(BUTTON));
 });
 
