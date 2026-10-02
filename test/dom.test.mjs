@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tweetFixture } from './fixtures.mjs';
 import { loadDom } from './harness.mjs';
 
-const { collectPhotoIds, tweetMeta, downloadFilename } = loadDom();
+const { collectPhotoIds, tweetMeta, downloadFilename, joinDirection } = loadDom();
 const first = (doc) => doc.querySelector('article[data-testid="tweet"]');
 
 test('returns ids for a two-image post', () => {
@@ -204,3 +204,84 @@ test('tweetMeta degrades to empty strings when the permalink and name are absent
   assert.deepEqual(meta, { tweetId: '', handle: '' });
   assert.equal(downloadFilename(meta, 'image/png'), 'x-image-weaver-unknown-unknown.png');
 });
+
+// --- joinDirection: geometry outranks structure -----------------------------------
+//
+// jsdom has no layout engine, so every element measures 0x0 and the geometry path
+// is unreachable unless the rectangles are supplied. They are supplied here, and
+// deliberately set to DISAGREE with the structure, because that disagreement is the
+// only thing that can show which signal is being used. With both agreeing, a broken
+// geometry path falls back to structure and answers correctly by accident -- which
+// is exactly what happened before these tests existed.
+
+const photosIn = (doc) => [...doc.querySelectorAll('[data-testid="tweetPhoto"]')];
+
+function giveRects(photos, rects) {
+  photos.forEach((photo, i) => {
+    photo.getBoundingClientRect = () => ({
+      top: rects[i].top,
+      bottom: rects[i].bottom,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: rects[i].bottom - rects[i].top,
+    });
+  });
+}
+
+test('geometry says side by side, so it joins left to right', () => {
+  const doc = tweetFixture({ photos: ['a', 'b'] });
+  giveRects(photosIn(doc), [{ top: 100, bottom: 400 }, { top: 100, bottom: 400 }]);
+  assert.equal(joinDirection(first(doc)), 'horizontal');
+});
+
+test('geometry says stacked even though the photos are siblings in one row', () => {
+  // The structural signal alone would say horizontal here -- same parent, a flat
+  // row. The rectangles say the parts sit one under the other, and geometry is what
+  // the reader can actually see.
+  const doc = tweetFixture({ photos: ['a', 'b'] });
+  giveRects(photosIn(doc), [{ top: 0, bottom: 300 }, { top: 300, bottom: 600 }]);
+  assert.equal(joinDirection(first(doc)), 'vertical');
+});
+
+test('geometry says a single row even though the photos are nested apart', () => {
+  // The mirror: structure would say vertical, geometry says one row.
+  const doc = tweetFixture({ photos: ['a', 'b', 'c', 'd'] });
+  const photos = photosIn(doc);
+  const row = photos[0].parentElement;
+  const top = doc.createElement('div');
+  const bottom = doc.createElement('div');
+  top.append(photos[0], photos[1]);
+  bottom.append(photos[2], photos[3]);
+  row.append(top, bottom);
+
+  giveRects(photos, [
+    { top: 100, bottom: 400 },
+    { top: 100, bottom: 400 },
+    { top: 100, bottom: 400 },
+    { top: 100, bottom: 400 },
+  ]);
+  assert.equal(joinDirection(first(doc)), 'horizontal');
+});
+
+test('falls back to structure when nothing is measurable', () => {
+  // jsdom's real answer for every element, so this is the fallback path.
+  const doc = tweetFixture({ photos: ['a', 'b'] });
+  assert.equal(joinDirection(first(doc)), 'horizontal', 'siblings in a row');
+});
+
+test('falls back to vertical when the parts are not siblings', () => {
+  const doc = tweetFixture({ photos: ['a', 'b'] });
+  const photos = photosIn(doc);
+  const row = photos[0].parentElement;
+  const nested = doc.createElement('div');
+  row.append(nested);
+  nested.append(photos[1]);
+  assert.equal(joinDirection(first(doc)), 'vertical');
+});
+
+test('a single-photo post has no direction to read', () => {
+  const doc = tweetFixture({ photos: ['only'] });
+  assert.equal(joinDirection(first(doc)), 'vertical');
+});
+

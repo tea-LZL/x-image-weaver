@@ -53,7 +53,9 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    * costs the user one click and no false positive can damage a post.
    */
 
-  var ROW_CLASS = 'xiw-media-row';
+  var BAR_CLASS = 'xiw-merge-bar';
+  var COUNT_CLASS = 'xiw-merge-count';
+  var ICON_CLASS = 'xiw-merge-icon';
   var BUTTON_CLASS = 'xiw-merge-button';
   var BUSY_CLASS = 'xiw-merge-button--busy';
   var STYLE_CLASS = 'xiw-styles';
@@ -61,85 +63,90 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   var BUSY_LABEL = 'Merging...';
   var ARIA_LABEL = 'Merge images into one';
 
-  // Owner stylesheet, injected into the page's <head> once. It cannot be a shadow
-  // boundary: the button has to sit in the media row beside the post's own
-  // images, and a shadow host there would bring its own box, which is the thing
-  // the placement rule above exists to avoid. So every rule here is scoped to a
-  // class this file adds, and `all: initial` is the first declaration on the
-  // button because X's global stylesheet reaches every element on the page and
-  // would otherwise be free to set this one's size, font and colour.
+  // Owner stylesheet, injected into the page's <head> once.
   //
-  // Flushed left on purpose -- it is a string, not code, and indenting it under
-  // the IIFE only makes every selector harder to read.
+  // It cannot be a shadow boundary: the control has to sit in the post's own flow,
+  // between the media and the timestamp, and a shadow host there would bring its own
+  // box, which is the thing the placement rule exists to avoid. So every rule is
+  // scoped to a class this file adds, and `all: initial` is the first declaration on
+  // each of our elements because X's global stylesheet reaches every element on the
+  // page and would otherwise set their size, font and colour.
   //
-  // What is NOT here: `position`, `top`, `right` and `z-index`. Those four are
-  // set inline on the button, because they decide whether the control is on
-  // screen in the right place at all and no author-level rule -- X's included --
-  // may outrank an inline declaration. `opacity` and `transition` are here
-  // rather than inline for the opposite reason: an inline opacity would beat the
-  // reveal rules below and the button could never appear.
+  // There is no absolute positioning, no z-index and no hover reveal here, and that
+  // is the point of the shape rather than an omission. The control is in the normal
+  // flow below the media, like the one TapToSee draws, so it cannot cover the
+  // composite, cannot need a stacking context on X's own row, and does not have to
+  // be invisible until hovered -- an always-visible control that is not on top of
+  // anything is not visual noise.
+  //
+  // Flushed left on purpose -- it is a string, not code, and indenting it under the
+  // IIFE only makes every selector harder to read.
   var STYLE = `
+.${BAR_CLASS} {
+  all: initial;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 0 4px;
+  font: 400 15px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.${COUNT_CLASS} {
+  all: initial;
+  box-sizing: border-box;
+  color: rgb(113, 118, 123);
+  font: inherit;
+  white-space: nowrap;
+}
+
 .${BUTTON_CLASS} {
   all: initial;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  padding: 6px 12px;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 0;
   border-radius: 9999px;
-  background-color: rgba(0, 0, 0, 0.72);
+  background-color: rgb(29, 155, 240);
   color: #ffffff;
-  font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 700 15px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  /* The default state. A fully-opaque control on every multi-photo post in the
-     feed is visual noise on a page the user did not ask us to restyle.
-
-     opacity, and not visibility: hidden, for two reasons and both are load
-     bearing. A visibility: hidden element is not focusable, so the
-     :focus-within reveal below could never fire -- the keyboard user could not
-     Tab to the control at all, and the reveal would be dead code. And it is not
-     hit-testable, which is the trade the other way: with opacity the button is
-     clickable during the 0.12s the fade takes, and a tap on a touch device --
-     where there is no hover to reveal it first -- lands on a control the user
-     has not seen yet. Hovering the row reveals it before a mouse can get
-     there, so that window is closed for a pointer; a finger is the open case,
-     and it merges the post and shows the button arriving at the same time,
-     which is a Task 8 checklist item rather than a defect to design around. */
-  opacity: 0;
-  transition: opacity 0.12s;
 }
 
-/* Reveal: the row is hovered, the button itself is hovered or holds focus, or a
-   stitch is in flight. The busy state is a class and not only a label for the
-   same reason -- pointer leaving the row mid-stitch must not hide the progress.
-   The button's own hover and focus-within are not only for their own sake: a
-   re-render can take the row's className back to X's own and leave this button
-   standing, and a control that is then revealed by neither is as invisible as
-   the one this file exists not to create.
-
-   pointer-events: none on the busy class is the mouse half of aria-disabled: the
-   control reports itself unavailable and refuses the pointer, while staying in
-   the tab order and keeping the focus it already has. The click listener's own
-   flag is what refuses the keyboard half. */
-.${ROW_CLASS}:hover .${BUTTON_CLASS},
-.${BUTTON_CLASS}:hover,
-.${BUTTON_CLASS}:focus-within,
-.${BUTTON_CLASS}.${BUSY_CLASS} {
-  opacity: 1;
+.${BUTTON_CLASS}:hover {
+  background-color: rgb(26, 140, 216);
 }
 
+/* all: initial above sets outline-style to none, which beats the user agent's own
+   focus ring -- so without this a keyboard user tabs to a control they cannot see. */
+.${BUTTON_CLASS}:focus-visible {
+  outline: 2px solid rgb(29, 155, 240);
+  outline-offset: 2px;
+}
+
+/* Busy is a class and not only the label, so the state survives the pointer moving
+   away. pointer-events: none is the mouse half of aria-disabled: the control reports
+   itself unavailable and refuses the pointer while staying in the tab order and
+   keeping the focus it already has. The click listener's own flag refuses the
+   keyboard half. */
 .${BUTTON_CLASS}.${BUSY_CLASS} {
   pointer-events: none;
   cursor: progress;
+  opacity: 0.75;
 }
 
-/* all: initial above sets outline-style to none, which beats the user agent's
-   own focus ring -- so without this a keyboard user tabs to a control they
-   cannot see. */
-.${BUTTON_CLASS}:focus-visible {
-  outline: 2px solid #1d9bf0;
-  outline-offset: 2px;
+.${ICON_CLASS} {
+  all: initial;
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 `;
 
@@ -152,7 +159,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
    *   when the post is not mergeable yet or not mergeable at all. The caller owns
    *   the `data-xiw-done` marker and must only write it on `true`; see below.
    * @description Puts one Merge button on the post's media row, if the post is
-   * mergeable, and wires it to `XIW.stitchVertical` and `XIW.overlay`.
+   * mergeable, and wires it to `XIW.stitchImages` and `XIW.overlay`.
    *
    * A no-op, leaving the DOM untouched, when `XIW.collectPhotoSources(root)`
    * returns `null` -- no photos, one photo, a video anywhere in the post, or a
@@ -182,58 +189,61 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   function mount(root) {
     if (XIW.collectPhotoSources(root) === null) return false;
 
-    // The container the button is anchored to: the deepest node that holds ALL of
-    // the post's own photos.
+    // The media block: the deepest node that holds ALL of the post's own photos.
+    // The control goes immediately after it, so it sits under the images and above
+    // the timestamp -- the position TapToSee uses.
     //
-    // Not the first photo's parentElement, which is what this used to do and which
-    // put the button in a different place depending on how many images the post
-    // has. X lays a 4-image gallery out as a grid, and the grid is nested -- the
-    // first photo's parent is one row of it, not the gallery -- so the button
-    // landed at the top-right of the top row, halfway down the media, while on a
-    // 2-image post it landed at the top-right of the whole thing. Anchoring to the
-    // common ancestor makes it the top-right of the media area for every layout,
-    // which is the same spot on every post.
+    // Not the first photo's parentElement, which is what this used to do: X nests a
+    // 4-image gallery, so the first photo's parent is one row of the grid rather
+    // than the gallery, and the control ended up inside the media at a different
+    // height depending on how many images there were.
     //
     // Own-photos, not all photos: an outer post quoting a two-photo post has four
-    // photo containers in its subtree, and the common ancestor of all four would
-    // be the outer article -- the button would sit over the author's name. The
-    // rule for which media a root owns is dom.js's and is exported for exactly
-    // this second use, so the two consumers cannot drift.
+    // photo containers in its subtree, and the common ancestor of all four would be
+    // the outer article. The rule for which media a root owns is dom.js's and is
+    // exported for exactly this second use, so the two consumers cannot drift.
     var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
-    var row = commonAncestor(photos);
-    if (!row || !row.parentElement) return false;
+    var media = commonAncestor(photos);
+    if (!media) return false;
     var doc = root.ownerDocument;
 
-    // The repairs come before the idempotency guard, and that ordering is the
-    // point of the guard being idempotent at all. A React re-render can put X's
-    // own className back on the row and leave this button standing, and a
-    // re-mount that returned early on finding the button would never restore the
-    // class the row-hover reveal is scoped to -- a control that is on the page
-    // and cannot be seen. Every write here is idempotent, so a caller that
-    // reaches one root twice pays for them twice and gets one button.
     ensureStyles(doc);
-    positionRow(row);
-    row.classList.add(ROW_CLASS);
-    row.setAttribute('data-xiw-row', '');
-    if (row.querySelector('.' + BUTTON_CLASS)) return true;
+
+    // Own-elements, for the same reason the photos are: an outer post quoting a
+    // mergeable post has the quoted post's bar somewhere in its subtree, and
+    // `root.querySelector` would find it and conclude this post already has one.
+    if (XIW.ownElements(root, '.' + BAR_CLASS).length > 0) return true;
+
+    var bar = doc.createElement('div');
+    bar.className = BAR_CLASS;
+    bar.setAttribute('data-xiw-bar', '');
+
+    // "2 Images" beside the control, as in the reference. The gallery is never a
+    // single image -- collectPhotoSources refuses fewer than two -- so this is
+    // always plural.
+    var count = doc.createElement('span');
+    count.className = COUNT_CLASS;
+    count.textContent = photos.length + ' Images';
+    bar.appendChild(count);
 
     var button = doc.createElement('button');
     button.setAttribute('type', 'button');
     button.setAttribute('aria-label', ARIA_LABEL);
     button.setAttribute('data-xiw-button', '');
     button.className = BUTTON_CLASS;
-    button.textContent = IDLE_LABEL;
-    // Inline, for the reason given above the stylesheet: this is a positioned
-    // control inside a container X also positions, and nothing at author level --
-    // X's rules included -- may outrank an inline declaration. The value only
-    // has to beat what is inside the media row, which positionRow's stacking
-    // context is there to guarantee; see the note on that function for why a
-    // small number is a deliberate choice here and not a risk.
-    button.style.position = 'absolute';
-    button.style.top = '8px';
-    button.style.right = '8px';
-    button.style.zIndex = '2';
-    row.appendChild(button);
+    button.appendChild(icon(doc));
+    button.appendChild(doc.createTextNode(IDLE_LABEL));
+    bar.appendChild(button);
+
+    // After the media, so the post reads media -> control -> timestamp. When the
+    // media block IS the root -- photos as direct children of the article, which X
+    // does not do but which no rule here should turn into an insertion outside the
+    // post -- appending inside the root is the safe direction to fail.
+    if (media !== root && media.parentElement) {
+      media.parentElement.insertBefore(bar, media.nextSibling);
+    } else {
+      root.appendChild(bar);
+    }
 
     // Per-button, not per-page: two posts can be stitched at once, and each
     // button reports on its own attempt.
@@ -277,9 +287,14 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
       var sources = XIW.collectPhotoSources(root);
       if (sources === null) return;
 
+      // Read at click time, like the sources: X can re-lay-out a post's media
+      // after the button was attached, and the direction is a fact about the
+      // layout, not about the post.
+      var direction = XIW.joinDirection(root);
+
       setBusy(true);
       try {
-        var composite = await XIW.stitchVertical(sources);
+        var composite = await XIW.stitchImages(sources, direction);
       } catch (err) {
         // Catch and route through the overlay rather than leaving the promise
         // rejected: this is the only failure this extension has a UI for, and
@@ -362,49 +377,32 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     return node;
   }
 
+  // The glyph beside the label: two panels with a bar under them, the split-image
+  // mark the reference uses. Inline SVG rather than a text glyph or a background
+  // image, so it inherits `currentColor` from the button and needs no request.
+  function icon(doc) {
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = doc.createElementNS(NS, 'svg');
+    svg.setAttribute('class', ICON_CLASS);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    var paths = ['M2 4h8v12H2z', 'M14 4h8v12h-8z', 'M2 18h20v2H2z'];
+    for (var i = 0; i < paths.length; i++) {
+      var path = doc.createElementNS(NS, 'path');
+      path.setAttribute('d', paths[i]);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
   XIW.button = { mount: mount };
 
   function reportUnexpected(err) {
     console.error('X Image Weaver: the overlay threw while showing a composite', err);
   }
 
-  // `position: relative` on the row is what makes the button's `absolute` mean
-  // "top-right of the media" rather than "top-right of whatever ancestor X left
-  // positioned" -- often the whole page. Only written when there is nothing to
-  // inherit, so a row X already positions keeps its own.
-  function positionRow(row) {
-    var view = row.ownerDocument && row.ownerDocument.defaultView;
-    var position = '';
-    var zIndex = '';
-    if (view && typeof view.getComputedStyle === 'function') {
-      // getComputedStyle is the honest question -- the value can come from a
-      // stylesheet rule, not only from an inline style -- and it throws on
-      // elements in a document with no view, which is not a failure worth
-      // propagating: a row we cannot measure is a row we make positioned.
-      try {
-        position = view.getComputedStyle(row).position || '';
-        zIndex = view.getComputedStyle(row).zIndex || '';
-      } catch {
-        position = '';
-        zIndex = '';
-      }
-    }
-    if (position === '' || position === 'static') row.style.position = 'relative';
 
-    // A stacking context on the row, and this is the second half of why the
-    // button's own z-index is safe. A positioned element with z-index: auto does
-    // not create one, so without this the button's z-index is compared against
-    // every z-index on the page -- and X's own modals and menus sit in the
-    // hundreds. With one, the comparison is confined to the media row, where the
-    // values in play are single digits, and the button cannot out-paint X's
-    // overlay chrome either, which is correct: an overlay that covers the media
-    // is entitled to cover the control that sits on it.
-    //
-    // Only written when the row has none. Overwriting a z-index X chose would
-    // demote the row itself, and a row that already has one already is a
-    // stacking context, so there is nothing to add.
-    if (zIndex === '' || zIndex === 'auto') row.style.zIndex = '0';
-  }
 
   // One stylesheet for the page, found by its own class. Injected per document
   // rather than per root, because a page with forty mergeable posts must carry

@@ -11,7 +11,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
 // one becomes a property of it, so an unwrapped helper here is a name any later
 // script could clobber. The whole XIW namespace exists to keep this extension's
 // internals out of X's way and out of each other's; leaking six names back out
-// undoes it. Only the four exports below reach the namespace.
+// undoes it. Only the five exports below reach the namespace.
 //
 // Selectors are read per call, never resolved once at load: media is
 // re-collected at click time because React can swap a node's media after a
@@ -55,7 +55,60 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     return sources;
   };
 
-  // The ids alone, for callers that only need to know WHICH media a post holds --
+  // Which way this post's parts should be joined, read from how they are laid out
+  // on the page. See XIW.composeDirection for why the layout is the best available
+  // statement of how the original was cut.
+  //
+  // Geometry first, structure second, and the order matters. A browser gives real
+  // rectangles and they answer the question directly, including the 2x2 grid case
+  // that structure cannot distinguish from a row. When there are no rectangles to
+  // read -- jsdom has no layout engine, and an off-screen or display:none subtree
+  // measures as zeroes -- the structure is the only signal left: photos that share
+  // one parent are siblings in a row, and photos that do not are nested, which is
+  // what a grid looks like. The fallback is a weaker answer, not a guess, and it
+  // errs the way the product shipped.
+  XIW.joinDirection = function joinDirection(root) {
+    var photos = XIW.ownElements(root, XIW.SELECTORS.tweetPhoto);
+    if (photos.length < 2) return 'vertical';
+
+    var rects = [];
+    var measurable = true;
+    for (var i = 0; i < photos.length; i++) {
+      var rect = measurableRect(photos[i]);
+      if (rect === null) {
+        measurable = false;
+        break;
+      }
+      rects.push(rect);
+    }
+
+    var fromGeometry = measurable ? XIW.composeDirection(rects) : null;
+    if (fromGeometry !== null) return fromGeometry;
+
+    var parent = photos[0].parentElement;
+    for (var j = 1; j < photos.length; j++) {
+      if (photos[j].parentElement !== parent) return 'vertical';
+    }
+    return 'horizontal';
+  };
+
+  // A part's vertical extent, or null when the element has no measurable box.
+  //
+  // Zero width AND zero height is the signal for "no layout here": a real image
+  // container is never both, and jsdom answers zeroes for everything. Checking both
+  // rather than either keeps a genuinely thin element from being read as absent.
+  function measurableRect(element) {
+    if (typeof element.getBoundingClientRect !== 'function') return null;
+    var rect;
+    try {
+      rect = element.getBoundingClientRect();
+    } catch {
+      return null;
+    }
+    if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+    return { top: rect.top, bottom: rect.bottom };
+  }
+
   // deciding whether it is mergeable, or reading a post back in a test. A view of
   // collectPhotoSources, not a second implementation, so the two cannot disagree.
   XIW.collectPhotoIds = function collectPhotoIds(root) {

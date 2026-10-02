@@ -8,7 +8,7 @@ import { loadAll } from './harness.mjs';
 // wrong with the rest of the pipeline when that happens -- the id is right, the
 // decode never runs -- so the only assertion that catches it is the URL itself.
 //
-// These tests drive the real stitchVertical with a stubbed fetch and stop at the
+// These tests drive the real stitchImages with a stubbed fetch and stop at the
 // first thing that needs a browser. Decoding fails in Node, and that failure is
 // expected and swallowed: by then the request has already been made and recorded,
 // which is the whole point. The suite asserts the requests, not the composite.
@@ -28,7 +28,7 @@ async function requestedUrls(sources) {
         };
       },
     });
-    await quietDecodeFailure(XIW.stitchVertical(sources));
+    await quietDecodeFailure(XIW.stitchImages(sources));
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -90,9 +90,9 @@ test('requests parts in the order they were handed over', async () => {
 });
 
 test('an empty source list is a caller bug and is not reported as a network failure', async () => {
-  // stitchVertical is documented to let this propagate rather than launder it
+  // stitchImages is documented to let this propagate rather than launder it
   // into NETWORK or DECODE; collectPhotoSources refuses anything under two
   // photos, so nothing shipped can reach it. Pinned so the contract is deliberate.
   const XIW = loadAll({ fetch: async () => { throw new Error('must not be called'); } });
-  await assert.rejects(XIW.stitchVertical([]), (err) => err.code === undefined);
+  await assert.rejects(XIW.stitchImages([]), (err) => err.code === undefined);
 });

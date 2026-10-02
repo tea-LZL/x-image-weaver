@@ -559,12 +559,17 @@ test('an article quoting a post: every root is marked, and the outer takes only 
   assert.deepEqual(XIW.collectPhotoIds(wrapper), ['cc', 'dd'], 'the wrapper owns the media it wraps');
   assert.deepEqual(XIW.collectPhotoIds(quoted), ['cc', 'dd'], 'and the quoted article agrees');
 
-  // Where the two buttons physically landed, which is a separate question from
-  // ownership and is observable in jsdom even though the crop that would hide a
-  // misplaced button needs a layout engine.
+  // Where the controls physically landed, which is a separate question from
+  // ownership. Each is in a bar directly after the media block it belongs to, so
+  // the outer post's control follows the outer post's own two photos and is not
+  // anywhere inside the quote.
   const outerRow = outer.querySelector('[data-testid="tweetPhoto"]').parentElement;
   assert.equal(outerRow.querySelectorAll('[data-testid="tweetPhoto"]').length, 2);
-  assert.equal(outerRow.querySelectorAll(BUTTON).length, 1, "the outer button is on the outer's row");
+  const outerBar = outer.querySelector('[data-xiw-bar]');
+  assert.ok(outerBar, "the outer post has a bar of its own");
+  assert.equal(outerBar.previousElementSibling, outerRow, "directly after the outer post's own media");
+  assert.equal(outerBar.closest('[data-testid="quoteTweet"]'), null, 'and not inside the quoted post');
+  assert.equal(outerBar.querySelectorAll(BUTTON).length, 1);
 });
 
 // The same shape arriving after startup, which is the case that actually happens

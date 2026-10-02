@@ -13,6 +13,7 @@ test('core.js publishes a shared namespace', () => {
 test('core.js declares tunables with the spec values', () => {
   const { TUNABLES } = loadCore();
   assert.equal(TUNABLES.MAX_CANVAS_HEIGHT, 16000);
+  assert.equal(TUNABLES.MAX_CANVAS_WIDTH, 16000);
   assert.equal(TUNABLES.MAX_CANVAS_AREA, 250_000_000);
   assert.equal(TUNABLES.FETCH_TIMEOUT_MS, 20000);
   assert.equal(TUNABLES.JPEG_FALLBACK_QUALITY, 0.95);

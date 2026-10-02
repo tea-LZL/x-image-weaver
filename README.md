@@ -24,9 +24,10 @@ built in the page with Canvas 2D and downloaded straight from a blob URL.
 
 ## Use
 
-Open any post with two or more images. Hover the media and a **Merge** button appears in its
-top-right corner. Click it. The parts are fetched at original resolution, stitched
-top-to-bottom with no gap, and shown full-screen. **Download** saves the result as
+Open any post with two or more images. A **Merge** pill appears just below the media, next to
+a count of the images. Click it. The parts are fetched at original resolution, joined with no
+gap in the direction the post lays them out, and shown full-screen. **Download** saves the
+result as
 `x-image-weaver-<handle>-<tweetId>.png`.
 
 If the stitch fails, the overlay opens in an error state naming the cause with a Retry button.
@@ -70,7 +71,7 @@ npm install          # devDependency: jsdom. The extension itself ships none of 
 node --test test/*.test.mjs
 ```
 
-121 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
+144 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
 and fails.
 
 What is covered automatically: the pure helpers, the DOM extraction rules under jsdom
@@ -136,7 +137,12 @@ reloading the extension.**
 
 ### Core behavior
 
-- [ ] Post with **2** images — button appears, composite is seamless.
+- [ ] Post with **2** images laid out side by side — the two are joined **left to right** into
+      one wide image, not stacked.
+- [ ] A 4-image post (a 2×2 grid) — joined **top to bottom**, which is what the tap-to-see
+      posts want.
+- [ ] The Merge control sits **below** the images, always visible, and does not cover the
+      composite.
 - [ ] Post with **3** images — same.
 - [ ] Post with **4** images — same.
 - [ ] Single-image post — **no** button.
@@ -206,8 +212,11 @@ reloading the extension.**
 
 ## Known limitations
 
-- Vertical stacking only. A 2×2 grid of quadrants is not reconstructed in grid order.
-- No reordering. Parts are stacked in X's own DOM order, so a gallery posted in the wrong
+- The join direction is read from the post's layout: images laid out side by side are joined
+  left to right, and a nested grid is joined top to bottom. A 2×2 grid of quadrants is not
+  reassembled as a grid, because the tap-to-see posts that produce that layout are one tall
+  image cut into strips and want stacking.
+- No reordering. Parts are joined in X's own DOM order, so a gallery posted in the wrong
   order stays in the wrong order.
 - The button appears on every 2+ image post, including ordinary multi-photo posts. Deliberate:
   no heuristic can avoid mangling a post it guesses wrong about.

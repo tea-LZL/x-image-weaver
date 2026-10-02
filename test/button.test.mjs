@@ -24,7 +24,7 @@ import { loadAll } from './harness.mjs';
 //
 // The real src/button.js is loaded through the existing harness, as
 // overlay.test.mjs loads the real src/overlay.js. Only the two collaborators
-// that do work this file is not about are replaced: XIW.stitchVertical (no
+// that do work this file is not about are replaced: XIW.stitchImages (no
 // createImageBitmap, no canvas -- stitch.js has no automated test by design) and
 // XIW.overlay, except in the one test that needs the real one for Retry.
 
@@ -32,7 +32,7 @@ const BUTTON = 'button.xiw-merge-button';
 const ARIA_LABEL = 'Merge images into one';
 const pbsUrl = (id) => `https://pbs.twimg.com/media/${id}?format=jpg&name=orig`;
 
-// What stitchVertical was handed, flattened to `id:format` per part.
+// What stitchImages was handed, flattened to `id:format` per part.
 //
 // The format is half the contract now, not decoration: the media id alone does
 // not name a fetchable URL, and a source that lost its format would fail against
@@ -77,9 +77,14 @@ function setup({ photos = [], videos = 0, quote = null, tweetId = '123', handle 
             format: 'image/png',
           });
 
-  XIW.stitchVertical = (ids) => {
-    stitched.push(ids.slice());
-    return respond(ids);
+  // The direction is recorded alongside the sources because it is half the
+  // contract now: the same media joined the wrong way is a different picture, and
+  // every other assertion here would stay green while it happened.
+  const directions = [];
+  XIW.stitchImages = (sources, direction) => {
+    stitched.push(sources.slice());
+    directions.push(direction);
+    return respond(sources, direction);
   };
   // The real overlay is left in place for the Retry test; everywhere else it is
   // a recorder, because what is under test is that the composite is handed
@@ -111,7 +116,7 @@ function setup({ photos = [], videos = 0, quote = null, tweetId = '123', handle 
   // for the wrong reason whenever the promise never settles.
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  return { document, window, XIW, stitched, shown, shownErrors, button, buttons, roots, photos: photos_, row, click, settle };
+  return { document, window, XIW, stitched, directions, shown, shownErrors, button, buttons, roots, photos: photos_, row, click, settle };
 }
 
 // --- 1. no button for a post that is not mergeable ------------------------------
@@ -151,22 +156,25 @@ test('mount is a no-op for something that is not a root at all', () => {
 // is inside it, so a button appended into a photo container is invisible on
 // every post and there is nothing on screen to diagnose.
 
-test('the button is a child of the media row for a 2-photo and a 4-photo post', () => {
+// Below the media, in its own bar -- where TapToSee puts it. Not on the image:
+// an overlay control covers the part of the composite the reader most wants to see,
+// and it has to be hidden until hover to avoid being visual noise on every post.
+test('the control sits in a bar directly after the media', () => {
   for (const count of [2, 4]) {
     const t = setup({ photos: Array.from({ length: count }, (_, i) => `p${i}`) });
     t.XIW.button.mount(t.roots()[0]);
 
-    const row = t.row();
+    const media = t.row();
+    const bar = t.document.querySelector('[data-xiw-bar]');
     const injected = t.button();
     assert.ok(injected, `${count} photos: a button exists`);
-    assert.equal(injected.parentElement, row, `${count} photos: its parent is the media row`);
-    assert.equal(injected.closest('[data-testid="tweetPhoto"]'), null, `${count} photos: and it is not inside a photo container`);
+    assert.ok(bar, `${count} photos: in a bar of its own`);
+    assert.equal(injected.parentElement, bar, `${count} photos: the button is inside the bar`);
+    assert.equal(bar.previousElementSibling, media, `${count} photos: which follows the media`);
+    assert.equal(bar.closest('[data-testid="tweetPhoto"]'), null, `${count} photos: and is not inside a photo container`);
     assert.equal(t.photos().length, count, `${count} photos: the fixture really had that many`);
-    for (const photo of t.photos()) {
-      assert.equal(photo.parentElement, row, `${count} photos: every photo shares the row the button is on`);
-    }
-    assert.equal(row.getAttribute('data-xiw-row'), '', `${count} photos: the row is marked as ours`);
     assert.equal(t.buttons().length, 1, `${count} photos: exactly one`);
+    assert.equal(bar.querySelector('.xiw-merge-count').textContent, `${count} Images`, 'with the count beside it');
   }
 });
 
@@ -198,11 +206,14 @@ test('a quoted post\'s media never decides where the outer button lands', () => 
 
   t.XIW.button.mount(outer);
 
-  const injected = t.button();
+  const bar = t.document.querySelector('[data-xiw-bar]');
   const ownPhoto = Array.from(t.photos()).find((photo) => photo.closest('[data-testid="quoteTweet"]') === null);
   assert.ok(ownPhoto, 'the outer post still has photos of its own');
-  assert.equal(injected.parentElement, ownPhoto.parentElement, 'the button is on the outer post\'s own row');
-  assert.equal(injected.closest('[data-testid="quoteTweet"]'), null, 'and nowhere near the quoted post\'s row');
+  assert.equal(bar.closest('[data-testid="quoteTweet"]'), null, 'the bar is nowhere near the quoted post');
+  assert.ok(
+    bar.previousElementSibling.contains(ownPhoto),
+    'and it follows the outer post\'s own media, not the quoted post\'s'
+  );
   assert.deepEqual(
     t.XIW.collectPhotoIds(outer),
     ['aa', 'bb'],
@@ -232,24 +243,22 @@ test('a second mount for one root produces one button', () => {
   assert.equal(t.buttons().length, 1, 'idempotent in its own terms, whatever the caller does');
 });
 
-test('a re-mount repairs a row a re-render stripped, without adding a second button', () => {
+test('a re-mount puts the bar back after a re-render removed it, without adding a second', () => {
   const t = setup({ photos: ['aa', 'bb'] });
-  t.XIW.button.mount(t.roots()[0]);
-  const row = t.row();
-  const button = t.button();
+  const root = t.roots()[0];
+  t.XIW.button.mount(root);
+  const bar = t.document.querySelector('[data-xiw-bar]');
 
-  // What a React commit does to an element it owns: the className it wrote is
-  // the className it writes back, and everything this extension added to that
-  // attribute goes with it. The button itself survives.
-  row.className = 'css-1dbjc4n';
-  row.removeAttribute('data-xiw-row');
-  assert.equal(row.classList.contains('xiw-media-row'), false, 'precondition: the row lost our class');
+  // A React commit that rebuilds the subtree the bar was inserted into takes the
+  // bar with it and leaves the article's marker in place, so the observer will not
+  // re-mount on its own -- a re-mount has to be able to put the control back.
+  bar.remove();
+  assert.equal(t.buttons().length, 0, 'precondition: the bar is gone');
 
-  t.XIW.button.mount(t.roots()[0]);
+  t.XIW.button.mount(root);
 
-  assert.equal(t.buttons().length, 1, 'still one button');
-  assert.equal(row.className, 'css-1dbjc4n xiw-media-row', 'and the row-hover reveal is scoped to a class that is back');
-  assert.equal(row.getAttribute('data-xiw-row'), '', 'with the marker restored too');
+  assert.equal(t.buttons().length, 1, 'exactly one button again');
+  assert.equal(t.document.querySelectorAll('[data-xiw-bar]').length, 1, 'and one bar');
 });
 
 // The same spot on every post, whatever layout X chose for it.
@@ -261,7 +270,7 @@ test('a re-mount repairs a row a re-render stripped, without adding a second but
 // is the "button shows up in a different place" half of the inconsistency, and it
 // is invisible to every other test here because the fixture builds a flat row
 // where the first parent and the common ancestor are the same node.
-test('the button anchors to the whole media area, not to the first row of a nested grid', () => {
+test('the bar follows the whole media block, not the first row of a nested grid', () => {
   const t = setup({ photos: ['a', 'b', 'c', 'd'] });
   const root = t.roots()[0];
   const flatRow = t.row();
@@ -280,10 +289,50 @@ test('the button anchors to the whole media area, not to the first row of a nest
 
   t.XIW.button.mount(root);
 
-  const button = root.querySelector(BUTTON);
-  assert.ok(button, 'a button was placed');
-  assert.equal(button.parentElement, grid, 'anchored to the gallery, so the spot does not move');
-  assert.notEqual(button.parentElement, top, 'anchoring to the first row is the bug this pins');
+  const bar = root.querySelector('[data-xiw-bar]');
+  assert.ok(bar, 'a bar was placed');
+  assert.equal(bar.previousElementSibling, grid, 'after the gallery, so it never lands mid-media');
+  assert.notEqual(bar.previousElementSibling, top, 'following the first row is the bug this pins');
+});
+
+// --- 2b. which way the parts are joined ------------------------------------------
+//
+// Two images side by side in the post are one picture split down the middle, and
+// stacking them produces a composite that is visibly wrong -- the reported bug.
+// A nested grid is the tap-to-see shape and joins top to bottom. The direction is
+// read at click time and handed to the stitch, so this asserts the hand-off.
+
+test('a side-by-side post joins its parts left to right', () => {
+  const t = setup({ photos: ['left', 'right'] });
+  t.XIW.button.mount(t.roots()[0]);
+  t.click(t.button());
+  return t.settle().then(() => {
+    assert.deepEqual(sawMedia(t.stitched), [['left:jpg', 'right:jpg']]);
+    assert.deepEqual(t.directions, ['horizontal'], 'side by side means joined side by side');
+  });
+});
+
+test('a nested grid joins its parts top to bottom', () => {
+  const t = setup({ photos: ['a', 'b', 'c', 'd'] });
+  const root = t.roots()[0];
+  const flatRow = t.row();
+
+  // The tap-to-see shape: a grid holding rows holding photos. Its parts are not a
+  // single row, so the original is a tall image cut into strips.
+  const grid = t.document.createElement('div');
+  const top = t.document.createElement('div');
+  const bottom = t.document.createElement('div');
+  const photos = [...flatRow.querySelectorAll('[data-testid="tweetPhoto"]')];
+  top.append(photos[0], photos[1]);
+  bottom.append(photos[2], photos[3]);
+  grid.append(top, bottom);
+  flatRow.replaceWith(grid);
+
+  t.XIW.button.mount(root);
+  t.click(t.button());
+  return t.settle().then(() => {
+    assert.deepEqual(t.directions, ['vertical']);
+  });
 });
 
 // --- 3. it is a real button, and it is styled without X's help -----------------
@@ -299,57 +348,13 @@ test('the control is a real labelled button with the required geometry', () => {
   assert.equal(injected.textContent, 'Merge', 'with a visible label of its own');
   assert.equal(injected.className, 'xiw-merge-button', 'and a namespaced class, not one of X\'s');
 
-  assert.equal(injected.style.position, 'absolute', 'positioned against the row');
-  assert.equal(injected.style.top, '8px');
-  assert.equal(injected.style.right, '8px');
   assert.equal(injected.getAttribute('data-xiw-button'), '', 'findable by the tests and by a reader in devtools');
-});
-
-test('the media row is made positioned, and only when it is not positioned already', () => {
-  const bare = setup({ photos: ['aa', 'bb'] });
-  // An X-authored class on the row, which is what a clobbering
-  // `row.className = ROW_CLASS` would destroy along with the rest of the post's
-  // media styling. set here rather than in the fixture, which this file does not
-  // modify.
-  bare.row().className = 'css-1dbjc4n r-1ye8kvj';
-  bare.XIW.button.mount(bare.roots()[0]);
-  assert.equal(bare.row().style.position, 'relative', 'an unpositioned row is given position: relative');
-  assert.equal(bare.row().className, 'css-1dbjc4n r-1ye8kvj xiw-media-row', "X's own row classes are added to, not replaced");
-
-  // X lays its media out with positioned cells, and overwriting one of those
-  // would move the post's images to be our button's containing block.
-  for (const existing of ['absolute', 'fixed', 'sticky']) {
-    const t = setup({ photos: ['aa', 'bb'] });
-    const row = t.row();
-    row.style.position = existing;
-    t.XIW.button.mount(t.roots()[0]);
-
-    assert.equal(row.style.position, existing, `a row already positioned ${existing} keeps it`);
-    assert.equal(t.buttons().length, 1, 'and still gets its button');
-  }
-});
-
-test('the media row is given a stacking context, and never one it already has', () => {
-  // A positioned element with z-index: auto is not a stacking context, so
-  // without this the button's z-index is compared against every z-index on the
-  // page -- where X's own modals live in the hundreds.
-  const bare = setup({ photos: ['aa', 'bb'] });
-  bare.XIW.button.mount(bare.roots()[0]);
-  assert.equal(bare.row().style.position, 'relative');
-  assert.equal(bare.row().style.zIndex, '0', 'a row with no z-index of its own gets one, which bounds the button to this subtree');
-
-  // Overwriting a z-index X chose would demote the row itself, and a row that
-  // already has one already is a stacking context.
-  for (const existing of ['0', '1', '5000']) {
-    const t = setup({ photos: ['aa', 'bb'] });
-    const row = t.row();
-    row.style.position = 'relative';
-    row.style.zIndex = existing;
-    t.XIW.button.mount(t.roots()[0]);
-
-    assert.equal(row.style.zIndex, existing, `a row already at z-index ${existing} keeps it`);
-    assert.equal(t.button().style.zIndex, '2', 'and the button keeps the small value, now bounded to inside that context');
-  }
+  // In the flow, not positioned over the image. That is the difference between this
+  // and the overlay control it replaced, and it is why no z-index or stacking
+  // context is needed anywhere.
+  assert.equal(injected.style.position, '', 'not positioned: it sits below the media');
+  assert.equal(injected.querySelector('.xiw-merge-icon').tagName.toLowerCase(), 'svg', 'with the split-image mark beside the label');
+  assert.equal(injected.querySelectorAll('path').length, 3, 'drawn as paths, so it needs no request and inherits the colour');
 });
 
 test('one stylesheet, scoped to this extension\'s own classes, injected once', () => {
@@ -363,20 +368,27 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   assert.equal(styles[0].parentNode, t.document.head, 'in the head, where it applies to rows injected later');
   assert.equal(styles[0].getAttribute('data-xiw-styles'), '');
 
-  // Text, not effect: jsdom has no cascade, so a rule can be asserted but not
-  // what it does. Read the selector, not a computed opacity.
+  // Text, not effect: jsdom has no cascade, so a rule can be asserted but not what
+  // it does. Read the selectors, not a computed colour.
   const css = styles[0].textContent;
-  assert.match(css, /\.xiw-media-row:hover \.xiw-merge-button/, 'revealed on row hover');
-  assert.match(css, /\.xiw-merge-button:hover/, 'and on its own hover, so it survives a re-render that takes the row class back');
-  assert.match(css, /\.xiw-merge-button:focus-within/, 'and on its own focus-within, so Tab reaches a visible control');
-  assert.match(css, /\.xiw-merge-button \{(?:[^}]*)opacity:\s*0;/, 'invisible by default');
-  assert.match(css, /transition:\s*opacity 0\.12s/, 'fading rather than blinking');
+  assert.match(css, /\.xiw-merge-bar \{/, 'the bar is styled');
+  assert.match(css, /\.xiw-merge-count \{/, 'and the count beside it');
+  assert.match(css, /\.xiw-merge-button \{(?:[^}]*?)background-color:\s*rgb\(29, 155, 240\)/, 'a blue pill');
+  assert.match(css, /border-radius:\s*9999px/, 'rounded');
+  assert.match(css, /\.xiw-merge-button:hover/, 'with a hover state');
+  assert.match(css, /\.xiw-merge-button:focus-visible/, 'and a focus ring, because all: initial removes the user agent one');
   assert.match(
     css,
     /\.xiw-merge-button\.xiw-merge-button--busy \{(?:[^}]*)pointer-events:\s*none/,
     'the busy state refuses the pointer, which is the mouse half of aria-disabled'
   );
+  assert.match(css, /\.xiw-merge-icon \{/, 'the mark is styled and scoped');
   assert.doesNotMatch(css, /(^|[^-])button\s*\{/, 'no rule that X could read as one of its own buttons');
+  // The properties that put the control over the media in the first place. Their
+  // absence is the change, so it is asserted rather than assumed.
+  assert.doesNotMatch(css, /position:\s*absolute/, 'nothing is positioned over the media any more');
+  assert.doesNotMatch(css, /z-index/, 'and no stacking context is asked for');
+  assert.doesNotMatch(css, /opacity:\s*0;/, 'nor hidden until hovered: there is nothing to hide from');
 });
 
 // --- 4. the click re-collects the media -----------------------------------------
@@ -398,7 +410,9 @@ test('the click stitches the media that is there now, not the media at mount', a
   }
   const extra = t.photos()[1].cloneNode(true);
   extra.querySelector('img').setAttribute('src', pbsUrl('clickC'));
-  row.insertBefore(extra, button);
+  // Appended to the media block: the button is no longer a child of it, it is in
+  // the bar beside it, so it cannot be the insertion reference.
+  row.appendChild(extra);
 
   t.click(button);
   await t.settle();
@@ -485,7 +499,7 @@ test('a successful stitch hands the composite and the post\'s meta to the overla
   assert.equal(t.shownErrors.length, 0, 'and not shown an error');
   const options = t.shown[0];
   assert.equal(options.format, 'image/png', 'the format is passed through, never assumed');
-  assert.equal(options.blob.type, 'image/png', 'with the blob stitchVertical resolved with');
+  assert.equal(options.blob.type, 'image/png', 'with the blob stitchImages resolved with');
   assert.deepEqual(options.meta, { tweetId: '1234567890', handle: 'ada' }, 'and the real tweetMeta of this post');
 
   const button = t.button();
@@ -510,7 +524,7 @@ test('a failed stitch hands the error and a retry to the overlay, and the button
   assert.equal(t.shown.length, 0, 'nothing was shown');
   assert.equal(t.shownErrors.length, 1, 'and the error was reported once');
   const { err, onRetry } = t.shownErrors[0];
-  assert.equal(err instanceof t.XIW.StitchError, true, 'the very error stitchVertical rejected with');
+  assert.equal(err instanceof t.XIW.StitchError, true, 'the very error stitchImages rejected with');
   assert.equal(err.code, 'NETWORK');
   assert.equal(typeof onRetry, 'function', 'with a function for the overlay to put behind its Retry control');
 

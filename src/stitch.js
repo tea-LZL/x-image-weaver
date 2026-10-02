@@ -14,7 +14,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
  *
  * @class XIW.StitchError
  * @extends Error
- * @description Every failure XIW.stitchVertical reports. Carries a `code`, which
+ * @description Every failure XIW.stitchImages reports. Carries a `code`, which
  * is one of exactly two values:
  *
  *   - `'NETWORK'` -- a fetch rejected (DNS, connection reset, CORS), an
@@ -31,13 +31,18 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
  * deliberately NOT one of these. computeCanvasSize answers with a smaller
  * `scale` instead, and the stitch is silently downscaled to fit.
  *
- * @function XIW.stitchVertical
+ * @function XIW.stitchImages
  * @async
  * @param {Array<{id: string, format: string|null}>} sources X media in DOM order
  *   -- the order XIW.collectPhotoSources returns them, and the whole contract,
- *   because part n is drawn at the running y offset of the n-1 parts above it.
+ *   because part n is drawn at the running offset of the n-1 parts before it.
  *   The format travels with the id because the id alone is not a fetchable
  *   resource; see originalUrl.
+ * @param {'horizontal'|'vertical'} [direction] Which axis the parts are joined on.
+ *   Vertical (the default, and what the product shipped with) stacks them top to
+ *   bottom; horizontal lays them left to right. XIW.joinDirection reads this off
+ *   the post's layout, because a post whose images sit side by side is one picture
+ *   split down the middle and stacking it produces a visibly wrong composite.
  * @returns {Promise<{blob: Blob, format: 'image/png'|'image/jpeg'}>} Resolves
  *   once with the composited image. `blob.type` is the same string as `format`;
  *   PNG is attempted first and JPEG at XIW.TUNABLES.JPEG_FALLBACK_QUALITY only
@@ -65,7 +70,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   }
   XIW.StitchError = StitchError;
 
-  XIW.stitchVertical = async function stitchVertical(sources) {
+  XIW.stitchImages = async function stitchImages(sources, direction) {
     // Fetches in parallel: they are independent, and a 6-part gallery would
     // otherwise pay the round trip six times over.
     var blobs = await Promise.all(sources.map(fetchOriginal));
@@ -83,7 +88,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
         var source = await decodeTile(blobs[i], mediaId);
         tiles.push(tileFrom(source, mediaId));
       }
-      canvas = compose(tiles);
+      canvas = compose(tiles, direction);
       return await encode(canvas);
     } finally {
       // compose() already released each bitmap as it finished drawing it, which
@@ -216,8 +221,8 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     return { width: width, height: height, source: source };
   }
 
-  function compose(tiles) {
-    var size = XIW.computeCanvasSize(tiles);
+  function compose(tiles, direction) {
+    var size = XIW.computeCanvasSize(tiles, direction);
     var canvas = document.createElement('canvas');
     canvas.width = size.width;
     canvas.height = size.height;
@@ -255,29 +260,30 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
     // on: the geometry above is exact, and smoothing is what would undo it.
     context.imageSmoothingEnabled = false;
 
-    // The three lines inside this loop are computeCanvasSize's arithmetic,
-    // restated. It summed the tile heights into castHeight, scaled that by
-    // `scale`, and rounded the product once to get canvas.height -- rounding
-    // from the *unscaled* extent, not from the pixels it had already rounded.
-    // So the draw size has to be tile.width * `scale` too. Re-deriving it from
-    // the canvas instead -- canvas.width and canvas.height, the obvious-looking
-    // substitution -- rounds the same quantity a second time and lands on the
-    // other side of a .5 tie for some gallery shapes, which puts each boundary
-    // a fraction of a pixel off the one above it and shows up as a hairline
-    // seam. `scale` is the only number here that never got rounded.
-    var y = 0;
+    // The draw size inside this loop is computeCanvasSize's arithmetic, restated.
+    // It scaled the *unscaled* extents by `scale` and rounded each product once to
+    // get the canvas dimensions. So the draw size has to be tile.width * `scale`
+    // too. Re-deriving it from the canvas instead -- canvas.width and canvas.height,
+    // the obvious-looking substitution -- rounds the same quantity a second time and
+    // lands on the other side of a .5 tie for some gallery shapes, which puts each
+    // boundary a fraction of a pixel off the one before it and shows up as a
+    // hairline seam. `scale` is the only number here that never got rounded.
+    //
+    // `offset` is the running position on the axis being joined: y for a vertical
+    // stack, x for a horizontal strip. The perpendicular axis centers each part, so
+    // parts of differing sizes line up on their shared edge -- which is what a
+    // split gallery expects in either direction.
+    // The placement arithmetic lives in core.js so it can be tested without a
+    // canvas; this loop only draws what it is told to.
+    var boxes = XIW.tileBoxes(tiles, size, direction);
     for (var i = 0; i < tiles.length; i++) {
       var tile = tiles[i];
-      var drawWidth = tile.width * size.scale;
-      var drawHeight = tile.height * size.scale;
-      // Centered, not left-aligned: tiles of differing widths line up on their
-      // shared edge, which is what the split-in-the-post posts expect.
-      context.drawImage(tile.source, (canvas.width - drawWidth) / 2, y, drawWidth, drawHeight);
-      y += drawHeight;
+      var box = boxes[i];
+      context.drawImage(tile.source, box.x, box.y, box.width, box.height);
       // Released here rather than in one sweep at the end: toBlob is the slow
       // step below and should not run holding every part in decoded memory.
       // releaseTile() clears the handle, so the backstop sweep in
-      // stitchVertical is free to run over these tiles again on a throw.
+      // stitchImages is free to run over these tiles again on a throw.
       releaseTile(tile);
     }
 
@@ -312,7 +318,7 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   }
 
   // Drops the decoded pixels behind a tile and clears the handle, so neither the
-  // backstop sweep in stitchVertical nor a second pass can release it twice.
+  // backstop sweep in stitchImages nor a second pass can release it twice.
   function releaseTile(tile) {
     release(tile.source);
     tile.source = null;

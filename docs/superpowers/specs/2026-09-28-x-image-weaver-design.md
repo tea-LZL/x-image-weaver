@@ -40,7 +40,7 @@ Chrome Web Store.
 | Decision | Choice | Rationale |
 |---|---|---|
 | Trigger | Per-post opt-in button | Never mangles ordinary multi-photo posts. No detection heuristics to get wrong. |
-| Layout | Always vertical stack | X itself stacks vertically on tap. Kills the grid branch and all reordering logic. |
+| Layout | Follows the post's own layout | Images laid out side by side are one picture split down the middle and join left to right; a nested grid is a tap-to-see post and joins top to bottom. Reading it from the layout is what makes both come out as the original. |
 | Result | Overlay viewer with download | The feed is never visually modified. |
 | Surfaces | Every feed surface | One generic DOM scanner instead of surface-specific logic. |
 | Tooling | Vanilla MV3, no build step | Loads unpacked from disk; edits apply on refresh. |
@@ -84,7 +84,7 @@ no file imports another.
 
 - `core.js` → `XIW.SELECTORS`, `XIW.TUNABLES`, `XIW.mediaSourceFromUrl(url)`, `XIW.mediaIdFromUrl(url)`, `XIW.computeCanvasSize(tiles)`
 - `dom.js` → `XIW.collectPhotoSources(root)`, `XIW.collectPhotoIds(root)`, `XIW.ownElements(root, selector)`, `XIW.tweetMeta(root)`
-- `stitch.js` → `XIW.stitchVertical(sources) → Promise<{ blob, format }>`
+- `stitch.js` → `XIW.stitchImages(sources, direction) → Promise<{ blob, format }>`
 - `overlay.js` → `XIW.overlay.show(blob, meta)`, `XIW.overlay.hide()`
 - `button.js` → `XIW.button.mount(root) → boolean`
 - `main.js` → bootstraps the observer; no exports
@@ -177,19 +177,25 @@ removes the risk of React swapping a node's media after the button was attached.
 
 ### Button placement
 
-The button is appended to the **deepest common ancestor of the post's own photo containers**,
-not inside a photo container. X sets `overflow: hidden` on `tweetPhoto` to perform cropping, so
-a button placed inside it would be clipped.
+The control sits in its own bar **directly after the post's own media block**, in the post's
+normal flow — the position TapToSee uses. The bar holds a muted count (`2 Images`) and a blue
+rounded pill labelled **Merge** with a split-image mark, always visible.
 
-The common ancestor, rather than the first photo's `parentElement`, is what keeps the button in
-the same spot on every post. X nests a 4-image gallery — the grid holds rows and the rows hold
-the photos — so the first photo's parent is one *row* of the gallery, and anchoring there puts
-the button at the top-right of the top row: halfway down the media on a 4-image post and at the
-top of it on a 2-image one. The row is given inline `position: relative`;
-the button sits top-right, `opacity: 0`, revealing on row hover or `focus-within`.
+It is deliberately **not** overlaid on the media. An overlay covers the part of the composite
+the reader most wants to see, has to be hidden until hover to avoid being noise on every post,
+and needs `position` and `z-index` written onto X's own row to sit still. Putting the control
+below the media removes all three problems at once, and the media block is still found as the
+**deepest common ancestor of the post's own photo containers** so the bar follows the whole
+media area rather than one row of a nested grid.
 
-It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard
-and announced correctly.
+It is a real `<button type="button">` with an `aria-label`, so it is reachable by keyboard and
+announced correctly. `aria-disabled` and `aria-busy` carry the busy state rather than the
+`disabled` attribute: a disabled button cannot hold focus, so the keyboard user would lose
+their place the moment they activated it.
+
+Finding the media block via `ownElements` matters here for the same reason as everywhere else —
+an outer post quoting a two-photo post has four photo containers in its subtree, and the common
+ancestor of all four would be the outer article rather than its media.
 
 ### Tunables
 
@@ -197,14 +203,15 @@ Defined once in `core.js` as `XIW.TUNABLES`:
 
 | Name | Value | Meaning |
 |---|---|---|
-| `MAX_CANVAS_HEIGHT` | `16000` | Uniform downscale kicks in above this total height. Well inside Chrome's 32767 limit, and keeps area small enough to avoid allocation failure. |
+| `MAX_CANVAS_HEIGHT` | `16000` | Uniform downscale kicks in above this total height (the summed axis of a vertical join). Well inside Chrome's 32767 limit, and keeps area small enough to avoid allocation failure. |
+| `MAX_CANVAS_WIDTH` | `16000` | The same bound on the summed axis of a horizontal join. |
 | `MAX_CANVAS_AREA` | `250_000_000` | Second guard: if `W * H` exceeds this, downscale further. Chrome's practical cap is around 268M pixels. |
 | `FETCH_TIMEOUT_MS` | `20000` | Per-image `AbortSignal.timeout`. |
 | `JPEG_FALLBACK_QUALITY` | `0.95` | Quality for the allocation-failure retry. |
 
 ## Stitch pipeline
 
-`XIW.stitchVertical(sources) → Promise<{ blob, format }>`. No page-DOM access.
+`XIW.stitchImages(sources, direction) → Promise<{ blob, format }>`. No page-DOM access.
 
 1. Build `https://pbs.twimg.com/media/<id>?format=<fmt>&name=orig` for each source — full
    resolution, original format. A source with no usable format falls back to `jpg`; the id
@@ -393,5 +400,5 @@ cannot tell you whether a control is covering the image.
 | Composite exceeds canvas height or area cap | Silent uniform downscale, logged to the console. |
 | `toBlob` returns `null` (allocation failure) | Retry once as JPEG at quality 0.95; caller notes the format change. |
 | React re-parents a node or swaps its media | Sources re-collected at click time; the `data-xiw-done` marker is written only when a button actually landed, so a half-rendered post stays eligible. |
-| X's `overflow: hidden` crops the button | Button is a child of the media row, never of a photo container. |
+| X's `overflow: hidden` crops the button | The control is not inside the media at all: it sits in its own bar directly after the media block, in the post's normal flow. |
 | Duplicate X media IDs in one post | Preserved, not de-duplicated. |
