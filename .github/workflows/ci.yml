@@ -44,5 +44,5 @@ jobs:
         # command, and a file that stops existing should fail here first.
         run: |
           set -euo pipefail
-          zip -r -X /tmp/package-check.zip manifest.json src icons
+          zip -r -X /tmp/package-check.zip manifest.json src icons -x 'icons/icon-source.png'
           unzip -l /tmp/package-check.zip

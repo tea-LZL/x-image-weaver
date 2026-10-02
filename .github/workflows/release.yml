@@ -65,7 +65,11 @@ jobs:
           #
           # -X strips extra file attributes so the archive does not depend on the
           # machine that built it.
-          zip -r -X "$artifact" manifest.json src icons
+          # icon-source.png is the 1408px source the icon sizes are derived from.
+          # It is kept in the repository and has no business in a package that
+          # someone loads into their browser: it is 847KB against the 20KB of the
+          # four icons actually declared in the manifest.
+          zip -r -X "$artifact" manifest.json src icons -x 'icons/icon-source.png'
 
           # Printed so the run log shows what actually shipped.
           unzip -l "$artifact"

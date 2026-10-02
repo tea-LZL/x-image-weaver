@@ -70,7 +70,7 @@ npm install          # devDependency: jsdom. The extension itself ships none of 
 node --test test/*.test.mjs
 ```
 
-105 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
+121 tests. Do not use `node --test test/` — on Node 22 that treats `test` as a module to load
 and fails.
 
 What is covered automatically: the pure helpers, the DOM extraction rules under jsdom
@@ -118,9 +118,11 @@ published artifact.
 
 ### What is in the release
 
-`x-image-weaver-v<version>.zip` containing only `manifest.json`, `src/`, and `icons/` — the
-files Chrome loads, and nothing else. Tests, docs, CI config, and the jsdom devDependency are
-excluded, so the archive is small enough to read before loading it into a browser. To install
+`x-image-weaver-v<version>.zip` containing only `manifest.json`, `src/`, and the four icons the
+manifest declares — the files Chrome loads, and nothing else. Tests, docs, CI config, the jsdom
+devDependency, and `icons/icon-source.png` (the 1408px source the icon sizes are derived from —
+847KB against the 20KB of the icons themselves) are all excluded, so the archive stays small
+enough to read before loading it into a browser. To install
 from a release, unzip it and point **Load unpacked** at the extracted folder.
 
 There is no `.crx`. Building one requires a private signing key, and shipping that key to CI
