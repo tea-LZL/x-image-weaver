@@ -10,6 +10,21 @@ recombines them for viewing and safekeeping.
 It is a personal reimplementation of the TapToSee extension, scoped down: vertical stacking
 only, no grid reconstruction, no tile reordering, no batch processing.
 
+## Screenshots
+
+In a timeline the control is a small icon in the gutter to the left of the media,
+with one dot per image under it:
+
+![Merge icon and per-image dots in the timeline gutter](docs/images/feed-control.png)
+
+On a post's own page it is a labelled pill below the media, beside the image count:
+
+![3 Images label beside the blue Merge pill on a post page](docs/images/post-merge-button.png)
+
+The merged result, full-screen, with a Download button:
+
+![Merged image shown full-screen with a Download button](docs/images/merged-view.png)
+
 ## Install
 
 1. Open `chrome://extensions`.
