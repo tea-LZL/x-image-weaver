@@ -217,9 +217,10 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   height: 34.75px;
   padding: 0;
   border-radius: 9999px;
-  /* X's own action-button colour, not a disc. The disc read as a sticker on the
-     art; this reads as another of the post's controls, and the hover is the same
-     blue wash X uses on reply and repost. */
+  /* No disc. On lights-out the gutter is the same black as the page, and a filled
+     circle reads as a sticker on it. The mark is X's own gray, which is what reply
+     and repost use, so at rest it belongs to the timeline. Hover is Twitter blue:
+     the icon itself, plus the faint wash X puts behind a hovered action. */
   background-color: transparent;
   color: rgb(113, 118, 123);
 }
@@ -229,21 +230,8 @@ var XIW = (globalThis.XIW = globalThis.XIW || {});
   color: rgb(29, 155, 240);
 }
 
-/* X's gray action colour disappears on a black timeline, and the blue hover wash
-   is only a tenth of blue, so it stays faint there too. A dark page gets a white
-   icon on a visible disc, and hover brightens that disc instead of tinting it. */
-html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS} {
-  color: rgb(255, 255, 255);
-  background-color: rgba(255, 255, 255, 0.2);
-}
-
-html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}:hover {
-  color: rgb(255, 255, 255);
-  background-color: rgba(255, 255, 255, 0.42);
-}
-
-html[data-xiw-theme="dark"] .${DOT_CLASS} {
-  background-color: rgb(255, 255, 255);
+.${GUTTER_CLASS}:hover .${DOT_CLASS} {
+  background-color: rgb(29, 155, 240);
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS} .${ICON_CLASS} {
@@ -277,32 +265,39 @@ html[data-xiw-theme="dark"] .${DOT_CLASS} {
 }
 
 /* The timeline control has no visible label, so "Merging..." never shows. The
-   icon spins, and the disc brightens, for as long as the merge runs. Reduced
-   motion keeps the brighter disc and skips the spin. */
-@keyframes xiw-merge-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+   icon stays put and breathes, in Twitter blue, for as long as the merge runs.
+   The dots under it breathe in the same rhythm, a step apart, so the loading
+   state is a pulse rather than a spinner. No disc: the black gutter stays black.
+   Reduced motion holds the blue and skips the pulse. */
+@keyframes xiw-merge-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 
 .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
   opacity: 1;
-  background-color: rgba(29, 155, 240, 0.22);
+  background-color: transparent;
   color: rgb(29, 155, 240);
 }
 
-html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
-  background-color: rgba(255, 255, 255, 0.55);
-  color: rgb(255, 255, 255);
+.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS} {
+  animation: xiw-merge-pulse 1.2s ease-in-out infinite;
 }
 
-.${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS} {
-  animation: xiw-merge-spin 0.7s linear infinite;
-  transform-origin: center;
+.${GUTTER_CLASS}:has(.${BUSY_CLASS}) .${DOT_CLASS} {
+  background-color: rgb(29, 155, 240);
+  animation: xiw-merge-pulse 1.2s ease-in-out infinite;
 }
+
+.${GUTTER_CLASS}:has(.${BUSY_CLASS}) .${DOT_CLASS}:nth-child(2) { animation-delay: 0.15s; }
+.${GUTTER_CLASS}:has(.${BUSY_CLASS}) .${DOT_CLASS}:nth-child(3) { animation-delay: 0.3s; }
+.${GUTTER_CLASS}:has(.${BUSY_CLASS}) .${DOT_CLASS}:nth-child(4) { animation-delay: 0.45s; }
 
 @media (prefers-reduced-motion: reduce) {
-  .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS} {
+  .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} .${ICON_CLASS},
+  .${GUTTER_CLASS}:has(.${BUSY_CLASS}) .${DOT_CLASS} {
     animation: none;
+    opacity: 1;
   }
 }
 
@@ -311,6 +306,10 @@ html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
   display: block;
   width: 16px;
   height: 16px;
+  /* all: initial sets color to black, and the mark is filled with currentColor.
+     Without inherit the button's gray, and the Twitter blue on hover and while
+     merging, never reach the icon. On a black timeline that is an invisible mark. */
+  color: inherit;
   fill: currentColor;
 }
 `;
@@ -947,9 +946,10 @@ html[data-xiw-theme="dark"] .${BUTTON_CLASS}.${ICON_ONLY_CLASS}.${BUSY_CLASS} {
   // One stylesheet for the page, found by its own class. Injected per document
   // rather than per root, because a page with forty mergeable posts must carry
   // one <style>, not forty.
-  // X sets color-scheme and the page background on the root. The gray icon is
-  // readable on a light page and nearly invisible on lights-out, so the dark
-  // rules key off this attribute rather than the operating system's preference.
+  // X sets color-scheme and the page background on the root. Recorded so a black
+  // timeline can be told from a white one. The gutter mark does not take a
+  // different colour from it: X's gray already sits on both, and a white disc
+  // on black is what refused to blend in.
   function noteTheme(doc) {
     var root = doc.documentElement;
     if (!root || !root.setAttribute) return;

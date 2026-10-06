@@ -160,9 +160,9 @@ reloading the extension.**
       posts want.
 - [ ] In a feed, the control is an icon in the gutter to the **left** of the images,
       vertically centred on the media, with one dot per image under it. It is not drawn
-      on the picture. On a light page it is gray and hover turns it blue. On a dark page
-      it is white, and hover brightens the disc behind it. While a merge runs, the icon
-      spins. It is always visible.
+      on the picture. It is X's gray with no disc, so on a black timeline it sits in the
+      background, and hover turns it Twitter blue. While a merge runs the icon pulses
+      instead of spinning. It is always visible.
 - [ ] Clicking it works — it is not swallowed by X's own card link.
 - [ ] Scrolling a timeline and back does not lose the control on a recycled card.
 - [ ] On a post's own page, it is a labelled pill below the images, beside the count, on its

@@ -189,7 +189,7 @@ There are two shapes and the context decides which, matching the reference:
 | Context | Control |
 |---|---|
 | A post's own page (`/<handle>/status/<id>`, and only for the post whose id matches) | A bar directly **after** the post's media: a muted `2 Images` count beside a blue rounded **Merge** pill with a split-image mark. |
-| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | An icon-only button in the **gutter to the left of the images**, centred on the avatar column and on the media's vertical middle. On a light page it is gray and hover washes it blue. On a dark page the icon and its dots are white, on a visible disc, and hover brightens that disc. While a merge runs the icon spins; reduced motion holds the brighter disc instead. One dot per image sits under the icon. |
+| Everywhere else — home, profile, search, media tabs, and the replies on a post's page | An icon-only button in the **gutter to the left of the images**, centred on the avatar column and on the media's vertical middle. The icon and its dots are X's gray on a transparent ground, so on a black timeline they sit in the background, and hover turns them Twitter blue. While a merge runs the icon pulses in that blue; reduced motion holds the blue and skips the pulse. One dot per image sits under the icon. |
 
 The split is deliberate rather than two designs for one job. A feed card has no room
 below the media for a bar, and adding one to every card in a timeline changes the shape

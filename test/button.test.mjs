@@ -638,6 +638,11 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
     'the busy state refuses the pointer, which is the mouse half of aria-disabled'
   );
   assert.match(css, /\.xiw-merge-icon \{/, 'the mark is styled and scoped');
+  assert.match(
+    css,
+    /\.xiw-merge-icon \{[^}]*color:\s*inherit/,
+    'the mark inherits the button colour, so gray and Twitter blue actually paint it'
+  );
   assert.doesNotMatch(css, /(^|[^-])button\s*\{/, 'no rule that X could read as one of its own buttons');
 
   // Two variants, two shapes, and the difference asserted rather than assumed.
@@ -665,32 +670,41 @@ test('one stylesheet, scoped to this extension\'s own classes, injected once', (
   assert.match(gutter[1], /z-index:\s*\d/, 'and carries its own z-index, since X positions things too');
   assert.match(gutter[1], /pointer-events:\s*none/, 'the gutter box itself does not steal clicks');
   assert.match(css, /button--icon/, 'the icon-only shape is styled');
-  // X's action-button colour, not a disc painted on the art.
+  // X's action-button colour, not a disc. The same gray sits on black and on white.
   assert.match(css, /button--icon \{(?:[^}]*?)background-color:\s*transparent/, 'no disc');
-  assert.match(css, /button--icon:hover \{(?:[^}]*?)color:\s*rgb\(29, 155, 240\)/, 'hover turns the icon X blue');
+  assert.match(
+    css,
+    /button--icon \{(?:[^}]*?)color:\s*rgb\(113,\s*118,\s*123\)/,
+    'at rest the icon is X gray, so it sits in the black'
+  );
+  assert.match(css, /button--icon:hover \{(?:[^}]*?)color:\s*rgb\(29, 155, 240\)/, 'hover turns the icon Twitter blue');
+  assert.match(
+    css,
+    /button--icon:hover \{(?:[^}]*?)background-color:\s*rgba\(29, 155, 240, 0\.1\)/,
+    'and the hover wash is that same blue'
+  );
   assert.match(css, /\.xiw-merge-dot \{/, 'the per-image dots are styled');
+  assert.match(css, /merge-gutter:hover \.xiw-merge-dot/, 'the dots turn with the icon');
   assert.doesNotMatch(css, /rgba\(0,\s*0,\s*0,\s*0\.6\)/, 'the dark disc is gone');
+  assert.doesNotMatch(css, /rgba\(255,\s*255,\s*255,\s*0\.2\)/, 'no light disc on the black timeline');
+  assert.doesNotMatch(css, /rgba\(255,\s*255,\s*255,\s*0\.42\)/, 'hover does not brighten a white disc');
   assert.doesNotMatch(css, /opacity:\s*0;/, 'nothing is hidden until hovered: both variants are always visible');
-  assert.match(css, /@keyframes xiw-merge-spin/, 'a merge spins the timeline icon');
+  assert.match(css, /@keyframes xiw-merge-pulse/, 'a merge pulses the timeline icon');
+  assert.doesNotMatch(css, /xiw-merge-spin|rotate\(360deg\)/, 'the icon does not spin');
   assert.match(
     css,
-    /\.xiw-merge-button--icon\.xiw-merge-button--busy \.xiw-merge-icon \{[^}]*animation:\s*xiw-merge-spin/,
-    'the spin is on the icon, and only while it is busy'
-  );
-  assert.match(css, /prefers-reduced-motion:\s*reduce/, 'reduced motion keeps the brighter disc and skips the spin');
-  assert.match(
-    css,
-    /data-xiw-theme="dark"\] \.xiw-merge-button\.xiw-merge-button--icon \{[^}]*color:\s*rgb\(255,\s*255,\s*255\)/,
-    'a dark page draws the icon white'
+    /\.xiw-merge-button--icon\.xiw-merge-button--busy \.xiw-merge-icon \{[^}]*animation:\s*xiw-merge-pulse/,
+    'the pulse is on the icon, and only while it is busy'
   );
   assert.match(
     css,
-    /data-xiw-theme="dark"\] \.xiw-merge-button\.xiw-merge-button--icon:hover \{[^}]*background-color:\s*rgba\(255,\s*255,\s*255,\s*0\.42\)/,
-    'and hover brightens the disc behind it'
+    /button--icon\.xiw-merge-button--busy \{[^}]*background-color:\s*transparent/,
+    'busy keeps the gutter black: no disc behind the pulse'
   );
+  assert.match(css, /prefers-reduced-motion:\s*reduce/, 'reduced motion holds the blue icon and skips the pulse');
 });
 
-test('the gutter follows the page: white on a dark timeline, gray on a light one', () => {
+test('the page theme is still recorded: dark, dim, and light', () => {
   const dark = setup({ photos: ['a', 'b'], context: 'timeline' });
   dark.document.documentElement.style.colorScheme = 'dark';
   dark.document.documentElement.style.backgroundColor = 'rgb(0, 0, 0)';
